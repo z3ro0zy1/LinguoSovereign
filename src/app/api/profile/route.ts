@@ -4,6 +4,12 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
+type ProfileUpdateBody = {
+  name?: string;
+  image?: string;
+  password?: string;
+};
+
 export async function PUT(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -12,20 +18,17 @@ export async function PUT(req: NextRequest) {
     }
 
     const userId = (session.user as { id: string }).id;
-    const body = await req.json();
+    const body = (await req.json()) as ProfileUpdateBody;
     const { name, image, password } = body;
 
-    const updateData: any = {};
+    const updateData: { name?: string; image?: string; password?: string } = {};
     if (name) updateData.name = name;
     if (image) updateData.image = image;
 
-    // Only update and re-hash password if the user provided a new one
     if (password) {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      updateData.password = hashedPassword;
+      updateData.password = await bcrypt.hash(password, 10);
     }
 
-    // Perform atomic update in DB
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: updateData,
@@ -43,7 +46,7 @@ export async function PUT(req: NextRequest) {
       },
       { status: 200 },
     );
-  } catch (error: any) {
+  } catch (error) {
     console.error("API Error: PUT /api/profile -", error);
     return NextResponse.json(
       { error: "Internal Server Error" },

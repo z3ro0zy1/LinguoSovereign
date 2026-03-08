@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
     }
 
     const session = await getServerSession(authOptions);
-    const userId = session?.user ? (session.user as any).id : null;
+    const userId = session?.user && "id" in session.user ? (session.user as { id: string }).id : null;
 
     // Persist the evaluation
     const submission = await prisma.submission.create({
@@ -121,10 +121,10 @@ export async function POST(req: NextRequest) {
         aiEvaluation: aiParsed,
       },
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("API Error: POST /api/eval/subjective -", error);
     return NextResponse.json(
-      { error: "AI Subjective Evaluation failed", details: error.message },
+      { error: "AI Subjective Evaluation failed", details: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 },
     );
   }

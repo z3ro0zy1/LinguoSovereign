@@ -6,13 +6,11 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatIELTSTitle(rawTitle: string): string {
-  // E.g., C5-T1-T1答案及解析_雅思写作练习「新东方雅思官方网校」
   const cttMatch = rawTitle.match(/C(\d+)-T(\d+)-T(\d+)/i);
   if (cttMatch) {
     return `Cambridge ${cttMatch[1]} Test ${cttMatch[2]} Task ${cttMatch[3]}`;
   }
 
-  // General fallback logic
   let title = rawTitle.replace(/【.*?】/g, "").replace(/（.*?）/g, "");
   title = title.replace(/C(\d+)-T(\d+)/i, "Cambridge $1 Test $2");
   title = title.replace(/剑(\d+)\s*Test\s*(\d+)/i, "Cambridge $1 Test $2");
@@ -23,13 +21,42 @@ export function formatIELTSTitle(rawTitle: string): string {
   return title.trim();
 }
 
-/**
- * Rounds a raw average score to the nearest 0.5 band score
- * logic:
- * < .25 -> .0
- * >= .25 and < .75 -> .5
- * >= .75 -> round up to next integer
- */
+function toEncodedPublicPath(relativePath: string) {
+  const normalized = relativePath.replaceAll("\\", "/").replace(/^\/+/, "");
+  return `/${normalized
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")}`;
+}
+
+export function resolveAudioUrl(audioUrl: string | null | undefined): string {
+  if (!audioUrl) return "";
+  if (/^https?:\/\//i.test(audioUrl)) return audioUrl;
+
+  const normalized = audioUrl.replaceAll("\\", "/");
+  const publicMarker = "/public/";
+  const publicIndex = normalized.lastIndexOf(publicMarker);
+
+  if (publicIndex >= 0) {
+    return toEncodedPublicPath(normalized.slice(publicIndex + publicMarker.length));
+  }
+
+  if (normalized.startsWith("public/")) {
+    return toEncodedPublicPath(normalized.replace(/^public\//, ""));
+  }
+
+  if (normalized.startsWith("/")) {
+    return toEncodedPublicPath(normalized);
+  }
+
+  if (normalized.includes("/")) {
+    return toEncodedPublicPath(normalized);
+  }
+
+  return toEncodedPublicPath(`audios/${normalized}`);
+}
+
 export function roundIELTS(score: number): number {
   const decimal = score - Math.floor(score);
   if (decimal < 0.25) {

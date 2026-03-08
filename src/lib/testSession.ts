@@ -1,8 +1,34 @@
+type StoredAnswerValue = string | string[];
+
+export interface StoredUnitState {
+  answers: Record<string, StoredAnswerValue>;
+  reqIds: string[];
+  category: string;
+  timeSpent: number;
+}
+
+export const EMPTY_UNIT_STATE: StoredUnitState = {
+  answers: {},
+  reqIds: [],
+  category: "",
+  timeSpent: 0,
+};
+
+function safeParse<T>(value: string | null, fallback: T): T {
+  if (!value) return fallback;
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export const saveUnitState = (
   unitId: string,
   category: string,
   reqIds: string[],
-  answers: Record<string, any>,
+  answers: Record<string, StoredAnswerValue>,
   timeSpent: number,
 ) => {
   if (typeof window === "undefined") return;
@@ -12,13 +38,20 @@ export const saveUnitState = (
   localStorage.setItem(`linguo_time_${unitId}`, timeSpent.toString());
 };
 
-export const getUnitState = (unitId: string) => {
+export const getUnitState = (unitId: string): StoredUnitState => {
   if (typeof window === "undefined") {
-    return { answers: {}, reqIds: [], category: "", timeSpent: 0 };
+    return EMPTY_UNIT_STATE;
   }
+
   return {
-    answers: JSON.parse(localStorage.getItem(`linguo_ans_${unitId}`) || "{}"),
-    reqIds: JSON.parse(localStorage.getItem(`linguo_req_${unitId}`) || "[]"),
+    answers: safeParse<Record<string, StoredAnswerValue>>(
+      localStorage.getItem(`linguo_ans_${unitId}`),
+      {},
+    ),
+    reqIds: safeParse<string[]>(
+      localStorage.getItem(`linguo_req_${unitId}`),
+      [],
+    ),
     category: localStorage.getItem(`linguo_cat_${unitId}`) || "",
     timeSpent: parseInt(
       localStorage.getItem(`linguo_time_${unitId}`) || "0",

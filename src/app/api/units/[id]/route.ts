@@ -9,8 +9,6 @@ export async function GET(
     const resolvedParams = await params;
     const { id } = resolvedParams;
 
-    // Fetch the full unit document along with its associated questions.
-    // We order questions by serialNumber to match the original Cambridge exam layout.
     const unit = await prisma.questionUnit.findUnique({
       where: { id },
       include: {
@@ -28,12 +26,13 @@ export async function GET(
     }
 
     return NextResponse.json({ data: unit });
-  } catch (error: any) {
+  } catch (error) {
+    const details = error instanceof Error ? error.message : "Unknown error";
     console.error(`API Error: GET /api/units/[id] -`, error);
     return NextResponse.json(
       {
         error: "Failed to fetch question unit details",
-        details: error.message,
+        details,
       },
       { status: 500 },
     );

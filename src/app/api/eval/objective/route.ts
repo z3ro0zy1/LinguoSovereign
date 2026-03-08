@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
     });
 
     const session = await getServerSession(authOptions);
-    const userId = session?.user ? (session.user as any).id : null;
+    const userId = session?.user && "id" in session.user ? (session.user as { id: string }).id : null;
 
     // --- Persistence ---
     // Record the attempt in the database, including raw answers and the calculated score metadata.
@@ -128,10 +128,10 @@ export async function POST(req: NextRequest) {
         results: evaluateResults,
       },
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("API Error: POST /api/eval/objective -", error);
     return NextResponse.json(
-      { error: "Evaluation failed", details: error.message },
+      { error: "Evaluation failed", details: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 },
     );
   }

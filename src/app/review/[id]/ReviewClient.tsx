@@ -1,174 +1,21 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useState, useRef } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
-  CheckCircle2,
-  XCircle,
-  ChevronUp,
-  ChevronDown,
   Headphones,
-  PlayCircle,
-  PauseCircle,
-  SkipBack,
-  SkipForward,
-  Volume2,
   Eye,
   EyeOff,
   Edit3,
 } from "lucide-react";
-import parse, { HTMLReactParserOptions } from "html-react-parser";
+import parse from "html-react-parser";
 import { Switch } from "@/components/ui/switch";
-
-/**
- * formatAnswer
- * Converts various Prisma data formats (Json types) into a displayable string.
- * This handles arrays (for multi-choice), strings, and nested objects.
- * Falls back to "N/A" if data is missing.
- */
-function formatAnswer(answer: any): string {
-  if (answer === null || answer === undefined) return "N/A";
-  if (typeof answer === "string") return answer || "N/A";
-  if (typeof answer === "number" || typeof answer === "boolean")
-    return String(answer);
-  if (Array.isArray(answer)) {
-    return answer
-      .map((item) =>
-        typeof item === "object" && item !== null
-          ? (item.value ?? item.label ?? JSON.stringify(item))
-          : String(item),
-      )
-      .join(", ");
-  }
-  if (typeof answer === "object") {
-    if (answer.value !== undefined) return String(answer.value);
-    if (answer.label !== undefined) return String(answer.label);
-    return JSON.stringify(answer);
-  }
-  return String(answer);
-}
-
-/**
- * buildReviewParseOptions
- * A configuration object for 'html-react-parser'. It intercept tags during parsing
- * to inject React components and custom styling.
- *
- * Key features:
- * 1. Image Path Normalization: Ensures local images are served correctly from the public dir.
- * 2. Token Replacement: Replaces '{{response}}' in question stems with interactive spans
- *    that show the user's input alongside the official answer (color-coded).
- *
- * @param userAnswers - Array of strings matching the sequence of blanks.
- * @param subResults - Graded results from the database (contains isCorrect flags).
- * @param showAnswers - UI toggle to force-reveal correct answers.
- * @param officialAnswer - The truth source from the Question model.
- */
-function buildReviewParseOptions(
-  userAnswers: string[] | undefined,
-  subResults: any[] | undefined,
-  showAnswers: boolean,
-  officialAnswer: any,
-): HTMLReactParserOptions {
-  let blankIndex = 0;
-
-  return {
-    replace(domNode: any) {
-      // Logic for <img> tags: adjust src to be absolute and add styling.
-      if (
-        domNode.type === "tag" &&
-        domNode.name === "img" &&
-        domNode.attribs?.src
-      ) {
-        let src = domNode.attribs.src as string;
-        if (src.startsWith("images/")) src = "/" + src;
-        else if (src.startsWith("../images/"))
-          src = src.replace("../images/", "/images/");
-        return (
-          <img
-            {...domNode.attribs}
-            src={src}
-            className="max-w-full h-auto my-4 rounded shadow-sm mx-auto"
-            alt="IELTS Graphic"
-          />
-        );
-      }
-
-      // Logic for text nodes: look for {{response}} and swap for styled blanks.
-      if (
-        domNode.type === "text" &&
-        domNode.data &&
-        domNode.data.includes("{{response}}")
-      ) {
-        const parts: string[] = domNode.data.split("{{response}}");
-
-        return (
-          <>
-            {parts.map((part: string, idx: number) => {
-              if (idx === parts.length - 1)
-                return <span key={idx}>{part}</span>;
-
-              const currentIdx = blankIndex++;
-              const userVal = userAnswers?.[currentIdx] ?? "";
-              const subRes = subResults?.[currentIdx];
-
-              // Clean up official answer strings (remove variants separated by ;)
-              let officialStr = "";
-              if (subRes?.officialAnswer !== undefined) {
-                officialStr = String(subRes.officialAnswer).split(";")[0];
-              } else if (Array.isArray(officialAnswer)) {
-                officialStr = String(officialAnswer[currentIdx] ?? "");
-              } else if (officialAnswer !== undefined) {
-                officialStr = String(officialAnswer);
-              }
-
-              // Apply Tailwind styles based on whether the user was right/wrong
-              let inputClass =
-                "inline-block border-b-2 border-gray-300 px-2 text-center text-gray-500 mx-1 min-w-[90px] text-sm";
-              let correctBadge: React.ReactNode = null;
-
-              if (subRes !== undefined) {
-                if (subRes.isCorrect) {
-                  inputClass =
-                    "inline-block border-b-2 border-green-500 bg-green-50 text-green-700 px-2 mx-1 text-center font-bold min-w-[90px] text-sm rounded";
-                  correctBadge = (
-                    <CheckCircle2 className="inline w-3.5 h-3.5 text-green-500 ml-0.5 -mt-0.5" />
-                  );
-                } else {
-                  inputClass =
-                    "inline-block border-b-2 border-red-400 bg-red-50 text-red-600 px-2 mx-1 text-center line-through min-w-[90px] text-sm rounded";
-                  correctBadge = officialStr ? (
-                    <span className="inline-block ml-1 text-xs text-green-700 font-bold bg-green-100 px-1.5 py-0.5 rounded border border-green-200">
-                      ✓ {officialStr}
-                    </span>
-                  ) : null;
-                }
-              } else if (showAnswers && officialStr) {
-                inputClass =
-                  "inline-block border-b-2 border-green-400 bg-green-50 text-green-700 px-2 mx-1 text-center font-bold min-w-[90px] text-sm rounded";
-              }
-
-              const displayVal =
-                subRes !== undefined
-                  ? userVal || "—"
-                  : showAnswers
-                    ? officialStr || "—"
-                    : "______";
-
-              return (
-                <span key={idx} className="inline-flex items-baseline gap-0.5">
-                  <span>{part}</span>
-                  <span className={inputClass}>{displayVal}</span>
-                  {correctBadge}
-                </span>
-              );
-            })}
-          </>
-        );
-      }
-    },
-  };
-}
+import { resolveAudioUrl } from "@/lib/utils";
+import { ReviewAudioPlayer } from "./ReviewAudioPlayer";
+import { ObjectiveReviewQuestionCard } from "./ObjectiveReviewQuestionCard";
+import { buildReviewParseOptions, formatAnswer, parseRichAnswer } from "./review-utils";
 
 interface ReviewClientProps {
   unit: any;
@@ -210,14 +57,21 @@ export default function ReviewClient({
     (unit.category === "Reading/Listening" && unit.title.includes("Part"));
 
   // Toggle play/pause for the native audio element
-  const togglePlay = () => {
+  const togglePlay = async () => {
     if (!audioRef.current) return;
     if (isPlaying) {
       audioRef.current.pause();
-    } else {
-      audioRef.current.play();
+      setIsPlaying(false);
+      return;
     }
-    setIsPlaying(!isPlaying);
+
+    try {
+      await audioRef.current.play();
+      setIsPlaying(true);
+    } catch (error) {
+      console.error("Failed to play review audio", error);
+      setIsPlaying(false);
+    }
   };
 
   /**
@@ -306,111 +160,44 @@ export default function ReviewClient({
           </div>
         </header>
 
-        {/* --- Audio Player Bar (Listening ONLY) --- */}
-        {isListening && (
-          <div className="bg-slate-900 border-b border-slate-800 shrink-0 h-16 flex items-center px-8 gap-6 shadow-inner z-0">
-            {/* Native HTML5 Audio hidden element. The 'key' ensures it resets when the URL changes. */}
-            {unit.audioUrl && (
-              <audio
-                key={unit.audioUrl}
-                ref={audioRef}
-                src={`/${unit.audioUrl}`}
-                onTimeUpdate={() =>
-                  setCurrentTime(audioRef.current?.currentTime || 0)
-                }
-                onLoadedMetadata={() =>
-                  setDuration(audioRef.current?.duration || 0)
-                }
-                onEnded={() => setIsPlaying(false)}
-              />
-            )}
-            {/* Custom Audio Controls */}
-            <div className="flex items-center gap-4 text-slate-300">
-              <button
-                onClick={() => {
-                  if (audioRef.current) {
-                    audioRef.current.currentTime = Math.max(
-                      0,
-                      currentTime - 10,
-                    );
-                  }
-                }}
-                className="hover:text-white transition-colors"
-                title="Rewind 10s"
-              >
-                <SkipBack className="w-5 h-5" />
-              </button>
-              <button
-                onClick={togglePlay}
-                disabled={!unit.audioUrl}
-                className="hover:text-white transition-colors text-white disabled:opacity-40"
-              >
-                {isPlaying ? (
-                  <PauseCircle className="w-8 h-8" />
-                ) : (
-                  <PlayCircle className="w-8 h-8" />
-                )}
-              </button>
-              <button
-                onClick={() => {
-                  if (audioRef.current) {
-                    audioRef.current.currentTime = Math.min(
-                      duration,
-                      currentTime + 10,
-                    );
-                  }
-                }}
-                className="hover:text-white transition-colors"
-                title="Forward 10s"
-              >
-                <SkipForward className="w-5 h-5" />
-              </button>
-            </div>
-            {/* Progress Bar & Timestamps */}
-            <div className="flex text-xs font-medium text-slate-400 gap-3 flex-1 items-center">
-              <span className="tabular-nums w-10 text-right">
-                {formatAudioTime(currentTime)}
-              </span>
-              <div
-                className="h-1.5 bg-slate-700 w-full rounded-full overflow-hidden relative cursor-pointer group"
-                onClick={(e) => {
-                  if (!audioRef.current || !duration) return;
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const ratio = (e.clientX - rect.left) / rect.width;
-                  audioRef.current.currentTime = ratio * duration;
-                }}
-              >
-                <div
-                  className="absolute top-0 left-0 h-full bg-indigo-500 rounded-full group-hover:bg-indigo-400 transition-colors"
-                  style={{
-                    width: duration
-                      ? `${(currentTime / duration) * 100}%`
-                      : "0%",
-                  }}
-                />
-              </div>
-              <span className="tabular-nums w-10">
-                {formatAudioTime(duration)}
-              </span>
-            </div>
-            {/* Volume Control */}
-            <div className="flex items-center gap-2 text-slate-400">
-              <Volume2 className="w-4 h-4" />
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={volume}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value);
-                  setVolume(v);
-                  if (audioRef.current) audioRef.current.volume = v;
-                }}
-                className="w-20 accent-indigo-400"
-              />
-            </div>
-          </div>
+        {isListening && unit.audioUrl && (
+          <ReviewAudioPlayer
+            audioRef={audioRef}
+            audioUrl={resolveAudioUrl(unit.audioUrl)}
+            isPlaying={isPlaying}
+            currentTime={currentTime}
+            duration={duration}
+            volume={volume}
+            onTogglePlay={() => {
+              void togglePlay();
+            }}
+            onVolumeChange={(nextVolume) => {
+              setVolume(nextVolume);
+              if (audioRef.current) audioRef.current.volume = nextVolume;
+            }}
+            onSeek={(nextTime) => {
+              if (audioRef.current) {
+                audioRef.current.currentTime = nextTime;
+                setCurrentTime(nextTime);
+              }
+            }}
+            onTimeUpdate={() => {
+              if (audioRef.current) {
+                setCurrentTime(audioRef.current.currentTime);
+              }
+            }}
+            onLoadedMetadata={() => {
+              if (audioRef.current) {
+                audioRef.current.volume = volume;
+                setDuration(audioRef.current.duration || 0);
+              }
+            }}
+            onEnded={() => {
+              setIsPlaying(false);
+              setCurrentTime(0);
+            }}
+            formatAudioTime={formatAudioTime}
+          />
         )}
 
         {/* --- MAIN BODY: Two-column layout (independent scrolling) --- */}
@@ -482,17 +269,11 @@ export default function ReviewClient({
             <div className="flex-1 overflow-y-auto p-6 lg:p-10">
               <div className="space-y-8 pb-32 max-w-2xl mx-auto">
                 {unit.questions.map((q: any) => {
-                  // Find the corresponding results for this question in the submission
                   const resData = aiScore?.results?.find(
                     (r: any) => r.questionId === q.id,
                   );
                   const isExpanded = openAnalysis[q.id];
                   const displayNum = questionDisplayNumbers[q.id];
-
-                  /**
-                   * Format user answers for the parser options.
-                   * If the submission exists, we pull it; otherwise it's undefined.
-                   */
                   const userAnswers: string[] | undefined = resData?.userAnswer
                     ? Array.isArray(resData.userAnswer)
                       ? resData.userAnswer.map(String)
@@ -506,227 +287,19 @@ export default function ReviewClient({
                     q.answer,
                   );
 
-                  // Detect if question uses inline blank tokens (e.g. "The {{response}} is blue")
-                  const hasInlineBlanks =
-                    typeof q.stem === "string" &&
-                    q.stem.includes("{{response}}");
-
                   return (
-                    <div
+                    <ObjectiveReviewQuestionCard
                       key={q.id}
-                      id={`question-${q.serialNumber}`}
-                      className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200/60 relative group transition-all hover:border-indigo-100 hover:shadow-md"
-                    >
-                      {/* Question Number Badge */}
-                      <div className="absolute -left-3 -top-3 w-8 h-8 bg-indigo-100 text-indigo-700 font-bold rounded-full flex items-center justify-center shadow-sm text-xs">
-                        {displayNum}
-                      </div>
-
-                      {/* Question Stem - Parsed with custom logic to inject user/correct answers */}
-                      <div className="prose prose-sm max-w-none text-gray-800 font-medium mb-5 pl-2 leading-relaxed">
-                        {parse(q.stem, parseOpts)}
-                      </div>
-
-                      {/* Rendering logic for Multiple Choice Options (if present) */}
-                      {q.options && q.options.length > 0 && (
-                        <div className="space-y-2 mb-6">
-                          {q.options.map((opt: any, i: number) => {
-                            const optVal =
-                              typeof opt === "object"
-                                ? String(opt.value ?? opt.label ?? i)
-                                : String(opt);
-                            const optLabel =
-                              typeof opt === "object"
-                                ? String(opt.label ?? opt.value ?? opt)
-                                : String(opt);
-
-                            // Helper to extract official answers for comparison
-                            const officialAnswers: string[] =
-                              resData?.subResults
-                                ? resData.subResults.map((sr: any) =>
-                                    String(sr.officialAnswer ?? "")
-                                      .trim()
-                                      .toLowerCase(),
-                                  )
-                                : Array.isArray(q.answer)
-                                  ? q.answer.map((a: any) =>
-                                      String(a).trim().toLowerCase(),
-                                    )
-                                  : q.answer
-                                    ? [String(q.answer).trim().toLowerCase()]
-                                    : [];
-
-                            const isCorrectOpt = officialAnswers.includes(
-                              optVal.toLowerCase(),
-                            );
-
-                            // Check if user selected this specific option
-                            const userSelections: string[] = resData?.userAnswer
-                              ? Array.isArray(resData.userAnswer)
-                                ? resData.userAnswer.map((v: any) =>
-                                    String(v).trim().toLowerCase(),
-                                  )
-                                : [
-                                    String(resData.userAnswer)
-                                      .trim()
-                                      .toLowerCase(),
-                                  ]
-                              : [];
-
-                            const isSelected = userSelections.includes(
-                              optVal.toLowerCase(),
-                            );
-
-                            // Dynamic class switching based on graded state
-                            let optClass =
-                              "flex items-center gap-3 p-3 rounded-lg border text-sm";
-                            if (resData) {
-                              if (isCorrectOpt)
-                                optClass +=
-                                  " bg-green-50 border-green-300 text-green-800 font-semibold";
-                              else if (isSelected)
-                                optClass +=
-                                  " bg-red-50 border-red-300 text-red-700 line-through opacity-70";
-                              else optClass += " border-gray-100 text-gray-500";
-                            } else if (showAnswers && isCorrectOpt) {
-                              optClass +=
-                                " bg-green-50 border-green-300 text-green-800 font-semibold";
-                            } else {
-                              optClass += " border-gray-100 text-gray-600";
-                            }
-
-                            return (
-                              <div key={i} className={optClass}>
-                                <span className="w-5 h-5 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold shrink-0">
-                                  {String.fromCharCode(65 + i)}
-                                </span>
-                                <span>{optLabel}</span>
-                                {resData && isCorrectOpt && (
-                                  <CheckCircle2 className="w-4 h-4 text-green-500 ml-auto shrink-0" />
-                                )}
-                                {resData && isSelected && !isCorrectOpt && (
-                                  <XCircle className="w-4 h-4 text-red-400 ml-auto shrink-0" />
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {/* Footer Row: Only for standard questions (no inline blanks) */}
-                      {!hasInlineBlanks && (
-                        <div className="flex flex-col gap-3 py-4 border-t border-gray-50">
-                          {submission ? (
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-4 flex-wrap">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-gray-400 text-xs">
-                                    您的答案：
-                                  </span>
-                                  <span
-                                    className={`font-mono text-sm font-bold ${
-                                      resData?.isCorrect
-                                        ? "text-green-600"
-                                        : resData?.userAnswer != null
-                                          ? "text-red-500"
-                                          : "text-gray-400"
-                                    }`}
-                                  >
-                                    {formatAnswer(resData?.userAnswer) ||
-                                      "未作答"}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-gray-400 text-xs">
-                                    正确答案：
-                                  </span>
-                                  {showAnswers ||
-                                  resData?.isCorrect !== undefined ? (
-                                    <span className="font-mono text-sm font-bold text-green-600">
-                                      {formatAnswer(
-                                        resData?.subResults?.[0]
-                                          ?.officialAnswer ?? q.answer,
-                                      )}
-                                    </span>
-                                  ) : (
-                                    <span className="font-mono text-sm text-gray-300 select-none blur-sm">
-                                      ██████
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                              {resData?.isCorrect ? (
-                                <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
-                              ) : (
-                                <XCircle className="w-5 h-5 text-red-400 shrink-0" />
-                              )}
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <span className="text-gray-400 text-sm">
-                                正确答案：
-                              </span>
-                              {showAnswers ? (
-                                <span className="font-mono text-[15px] font-bold text-green-600 px-2 py-0.5 bg-green-50 rounded">
-                                  {formatAnswer(q.answer)}
-                                </span>
-                              ) : (
-                                <span className="font-mono text-[15px] font-bold text-gray-300 px-2 py-0.5 bg-gray-50 rounded select-none blur-sm">
-                                  ██████
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* For inline-blank questions with a submission: show overall correct/wrong icon */}
-                      {hasInlineBlanks && submission && resData && (
-                        <div className="flex items-center gap-2 pt-3 border-t border-gray-50 mt-3">
-                          {resData.isCorrect ? (
-                            <CheckCircle2 className="w-4 h-4 text-green-500" />
-                          ) : (
-                            <XCircle className="w-4 h-4 text-red-400" />
-                          )}
-                          <span className="text-xs text-gray-400">
-                            {resData.isCorrect ? "全部正确" : "含有错误答案"}
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Official analysis accordion */}
-                      {q.officialAnalysis && (
-                        <div className="mt-2 border border-blue-100 bg-blue-50/30 rounded-xl overflow-hidden transition-all">
-                          <button
-                            onClick={() => toggleAnalysis(q.id)}
-                            className="w-full flex items-center justify-between p-3 text-sm text-blue-600 font-semibold hover:bg-blue-50/50 transition-colors"
-                          >
-                            <span>{isExpanded ? "收起解析" : "显示解析"}</span>
-                            {isExpanded ? (
-                              <ChevronUp className="w-4 h-4" />
-                            ) : (
-                              <ChevronDown className="w-4 h-4" />
-                            )}
-                          </button>
-
-                          {isExpanded && (
-                            <div className="p-4 pt-0 border-t border-blue-100/50 text-sm text-gray-700 leading-relaxed font-serif whitespace-pre-wrap bg-blue-50/30">
-                              {Array.isArray(q.officialAnalysis)
-                                ? parse(
-                                    q.officialAnalysis
-                                      .map((item: any) =>
-                                        typeof item === "string"
-                                          ? item
-                                          : formatAnswer(item),
-                                      )
-                                      .join("<br/>"),
-                                  )
-                                : parse(String(q.officialAnalysis))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                      question={q}
+                      questionAnchorId={`question-${q.serialNumber}`}
+                      displayNumber={displayNum}
+                      resultData={resData}
+                      hasSubmission={!!submission}
+                      showAnswers={showAnswers}
+                      isExpanded={!!isExpanded}
+                      onToggleAnalysis={() => toggleAnalysis(q.id)}
+                      renderedStem={parse(q.stem, parseOpts)}
+                    />
                   );
                 })}
               </div>
@@ -894,7 +467,7 @@ export default function ReviewClient({
               {/* AI assessment markdown content */}
               {aiFeedback ? (
                 <div className="prose max-w-none prose-blue text-sm">
-                  {parse(aiFeedback.replace(/\n/g, "<br/>"))}
+                  {parseRichAnswer(aiFeedback)}
                 </div>
               ) : (
                 <div className="prose max-w-none text-gray-800 text-sm">

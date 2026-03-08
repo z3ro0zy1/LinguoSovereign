@@ -18,11 +18,11 @@ export async function GET() {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session || !session.user || !(session.user as any).id) {
+    if (!session || !session.user || !("id" in session.user)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const userId = (session.user as any).id;
+    const userId = (session.user as { id: string }).id;
 
     const submissions = (await prisma.submission.findMany({
       where: { userId },
@@ -30,7 +30,13 @@ export async function GET() {
         unit: true, // Pull in unit to figure out categories
       },
       orderBy: { createdAt: "asc" }, // chronological for charts
-    })) as any[];
+    })) as Array<{
+      id: string;
+      unitId: string;
+      createdAt: Date;
+      aiScore: unknown;
+      unit: { category: string; title: string };
+    }>;
 
     if (!submissions || submissions.length === 0) {
       return NextResponse.json({
@@ -48,7 +54,13 @@ export async function GET() {
       Speaking: { sum: 0, count: 0 },
     };
 
-    const timelineMap: Record<string, any> = {};
+    const timelineMap: Record<string, {
+      date: string;
+      Reading: number[];
+      Listening: number[];
+      Writing: number[];
+      Speaking: number[];
+    }> = {};
     let totalTime = 0;
 
     submissions.forEach((sub) => {
@@ -60,11 +72,14 @@ export async function GET() {
       }
 
       let score = 0;
-      const rawScoreAny = sub.aiScore as any;
+      const rawScoreAny = sub.aiScore as
+        | { scoreRatio?: string | number; timeSpent?: number; TR?: number | string; CC?: number | string; LR?: number | string; GRA?: number | string }
+        | null
+        | undefined;
       if (rawScoreAny) {
         if (finalCategory === "Reading" || finalCategory === "Listening") {
           // Objective: scale ratio (0.0-1.0) to IELTS band (0-9)
-          const ratio = parseFloat(rawScoreAny.scoreRatio || "0");
+          const ratio = Number.parseFloat(String(rawScoreAny.scoreRatio ?? "0"));
           score = roundIELTS(ratio * 9);
           totalTime += rawScoreAny.timeSpent || 0;
         } else {
@@ -111,9 +126,9 @@ export async function GET() {
      * Finalize timeline chart data:
      * If multiple tests occurred on the same day, we average them and round to 0.5 step.
      */
-    const timeline = Object.values(timelineMap).map((day: any) => {
-      const res: any = { date: day.date };
-      ["Reading", "Listening", "Writing", "Speaking"].forEach((cat) => {
+    const timeline = Object.values(timelineMap).map((day) => {
+      const res: Record<string, string | number> = { date: day.date };
+      (["Reading", "Listening", "Writing", "Speaking"] as const).forEach((cat) => {
         if (day[cat] && day[cat].length > 0) {
           const avg =
             day[cat].reduce((a: number, b: number) => a + b, 0) /
@@ -159,10 +174,13 @@ export async function GET() {
       }
 
       let score = 0;
-      const rawScoreAny = sub.aiScore as any;
+      const rawScoreAny = sub.aiScore as
+        | { scoreRatio?: string | number; timeSpent?: number; TR?: number | string; CC?: number | string; LR?: number | string; GRA?: number | string }
+        | null
+        | undefined;
       if (rawScoreAny) {
         if (category === "Reading" || category === "Listening") {
-          const ratio = parseFloat(rawScoreAny.scoreRatio || "0");
+          const ratio = Number.parseFloat(String(rawScoreAny.scoreRatio ?? "0"));
           score = roundIELTS(ratio * 9);
         } else {
           if (rawScoreAny.TR !== undefined) {
@@ -194,7 +212,7 @@ export async function GET() {
       timeline,
       history: history.reverse(),
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("API Error: GET /api/analytics -", error);
     return NextResponse.json(
       { error: "Failed to fetch analytics" },

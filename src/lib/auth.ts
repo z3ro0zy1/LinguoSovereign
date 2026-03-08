@@ -1,11 +1,11 @@
-import NextAuth, { NextAuthOptions } from "next-auth";
+import { type NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma) as any,
+  adapter: PrismaAdapter(prisma),
   providers: [
     CredentialsProvider({
       name: "Credentials",
@@ -45,6 +45,7 @@ export const authOptions: NextAuthOptions = {
           id: user.id,
           email: user.email,
           name: user.name,
+          image: user.image,
         };
       },
     }),
@@ -58,21 +59,17 @@ export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET || "fallback_secret_for_local_dev",
   callbacks: {
     async jwt({ token, user, trigger, session }) {
-      // On initial sign-in, populate token from user object
       if (user) {
         token.id = user.id;
         token.name = user.name;
         token.picture = user.image;
       }
 
-      // Handle explicit update() call from client (e.g. after profile save)
       if (trigger === "update" && session) {
         if (session.name !== undefined) token.name = session.name;
         if (session.image !== undefined) token.picture = session.image;
       }
 
-      // Always re-fetch the latest name/image from DB so profile changes
-      // are reflected on next page load even without calling update()
       if (token.id && trigger !== "update") {
         try {
           const freshUser = await prisma.user.findUnique({
@@ -84,7 +81,6 @@ export const authOptions: NextAuthOptions = {
             token.picture = freshUser.image;
           }
         } catch {
-          // If DB lookup fails, keep cached values — non-fatal
         }
       }
 

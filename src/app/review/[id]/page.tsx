@@ -46,7 +46,7 @@ async function ReviewServerWrapper({
 
   // Check for active session, otherwise redirect to sign-in
   if (!session || !session.user || !("id" in session.user)) {
-    redirect("/auth/signin");
+    redirect("/login");
   }
 
   // Fetch the specific unit (test section) including all its individual questions
@@ -88,7 +88,10 @@ async function ReviewServerWrapper({
     unit.category === "Reading/Listening";
 
   const aiScore = submission?.aiScore;
-  const feedbackData = aiScore as any;
+  const feedbackData = aiScore as
+    | { scoreRatio?: string | number; TR?: number | string; CC?: number | string; LR?: number | string; GRA?: number | string }
+    | null
+    | undefined;
   let calculatedScore = 0;
 
   if (feedbackData) {
@@ -98,7 +101,7 @@ async function ReviewServerWrapper({
        * scoreRatio is a decimal (e.g., 0.825).
        * We multiply by 9 (IELTS Max) and round to the nearest 0.5 band score.
        */
-      const ratio = parseFloat(feedbackData.scoreRatio || "0");
+      const ratio = Number.parseFloat(String(feedbackData.scoreRatio ?? "0"));
       calculatedScore = roundIELTS(ratio * 9);
     } else {
       /**

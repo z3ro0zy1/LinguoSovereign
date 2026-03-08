@@ -2,9 +2,15 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
+type RegisterBody = {
+  name?: string;
+  email?: string;
+  password?: string;
+};
+
 export async function POST(req: Request) {
   try {
-    const { name, email, password } = await req.json();
+    const { name, email, password } = (await req.json()) as RegisterBody;
 
     if (!email || !password) {
       return NextResponse.json(
@@ -13,7 +19,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Check for email collision to prevent duplicate accounts
     const existingUser = await prisma.user.findUnique({
       where: { email },
     });
@@ -25,7 +30,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Hash the password with a salt round of 10 for standard security
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
@@ -43,7 +47,7 @@ export async function POST(req: Request) {
       },
       { status: 201 },
     );
-  } catch (error: any) {
+  } catch (error) {
     console.error("Registration error:", error);
     return NextResponse.json(
       { error: "Something went wrong server-side" },

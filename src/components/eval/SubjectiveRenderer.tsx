@@ -1,33 +1,95 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import parse from "html-react-parser";
+import { Mic } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import parse from "html-react-parser";
-import { imageFixingOptions } from "./ObjectiveRenderer";
-import { Mic } from "lucide-react";
 import {
   AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { saveUnitState, getUnitState, clearUnitState } from "@/lib/testSession";
+import { imageFixingOptions } from "./objective/shared";
+import {
+  EMPTY_UNIT_STATE,
+  clearUnitState,
+  getUnitState,
+  saveUnitState,
+  type StoredUnitState,
+} from "@/lib/testSession";
 
-/**
- * SubjectiveRenderer Component
- *
- * Handles rendering for Writing and Speaking tasks where users contribute free-form text or voice.
- * Features:
- * - Supports Pagination (moving between multiple writing Parts or speaking Parts).
- * - Integrates the native `Web Speech API` for live transcription during Speaking tasks.
- * - Submits raw answers directly to the OpenAI-powered `api/eval/subjective` endpoint.
- * - Parses rich Markdown/HTML feedback from the AI Model to display dimensions (TR, CC, LR, GRA).
- */
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  }
+}
+
+type SpeechRecognitionAlternativeLike = {
+  transcript: string;
+};
+
+type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  0: SpeechRecognitionAlternativeLike;
+};
+
+type SpeechRecognitionEventLike = {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+};
+
+type BrowserSpeechRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: unknown) => void) | null;
+};
+
+type SpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
+type SubjectiveQuestion = {
+  id: string;
+  stem?: string;
+};
+
+type SubjectiveUnit = {
+  id: string;
+  category: string;
+  questions: SubjectiveQuestion[];
+};
+
+type BatchSubmission = {
+  unitId: string;
+  userAnswers: Record<string, string>;
+  timeSpent: number;
+  category: string;
+};
+
+type SubjectiveEvaluation = {
+  submissionId?: string;
+  aiEvaluation?: {
+    dimensions?: Record<string, number | string>;
+    summary?: string;
+  };
+};
+
+type SubjectiveRendererProps = {
+  unit: SubjectiveUnit;
+  isWriting: boolean;
+  onResult: (result: SubjectiveEvaluation, unitId?: string) => void;
+  result?: Record<string, unknown> | null;
+  isLastPart: boolean;
+  allFlowIds: string[];
+};
+
 export default function SubjectiveRenderer({
   unit,
   isWriting,
@@ -35,244 +97,184 @@ export default function SubjectiveRenderer({
   result,
   isLastPart,
   allFlowIds,
-}: any) {
-  // State management for pagination, data inputs, and loader UX.
+}: SubjectiveRendererProps) {
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const [dismissedRestorePrompt, setDismissedRestorePrompt] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
 
-  const [showRestorePrompt, setShowRestorePrompt] = useState(false);
-  const [backedUpState, setBackedUpState] = useState<{
-    answers: any;
-    timeSpent: number;
-  } | null>(null);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const state = getUnitState(unit.id);
-      if (Object.keys(state.answers).length > 0) {
-        setBackedUpState({
-          answers: state.answers,
-          timeSpent: state.timeSpent,
-        });
-        setShowRestorePrompt(true);
-      }
-    }
+  const storedState = useMemo<StoredUnitState>(() => {
+    if (typeof window === "undefined") return EMPTY_UNIT_STATE;
+    return getUnitState(unit.id);
   }, [unit.id]);
 
+  const shouldPromptRestore =
+    !dismissedRestorePrompt &&
+    Object.keys(answers).length === 0 &&
+    (Object.keys(storedState.answers).length > 0 || storedState.timeSpent > 0);
+
+  useEffect(() => {
+    const SpeechRecognitionCtor =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) return;
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognitionRef.current = recognition;
+
+    return () => {
+      recognition.stop();
+      recognitionRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const reqIds = unit.questions.map((question) => question.id);
+    saveUnitState(unit.id, unit.category, reqIds, answers, 0);
+  }, [answers, unit.category, unit.id, unit.questions]);
+
+  const questions = unit.questions ?? [];
+  const currentQuestion = questions[currentStep];
+
   const handleRestoreState = () => {
-    if (backedUpState) {
-      if (Object.keys(backedUpState.answers).length > 0) {
-        setAnswers(backedUpState.answers);
-      }
-    }
-    setShowRestorePrompt(false);
+    const restoredAnswers = Object.fromEntries(
+      Object.entries(storedState.answers).map(([key, value]) => [
+        key,
+        Array.isArray(value) ? value.join(" ") : value,
+      ]),
+    );
+    setAnswers(restoredAnswers);
+    setDismissedRestorePrompt(true);
   };
 
   const handleDiscardState = () => {
     clearUnitState(unit.id);
     setAnswers({});
-    setShowRestorePrompt(false);
+    setDismissedRestorePrompt(true);
   };
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const reqIds = unit.questions?.map((q: any) => q.id) || [];
-      saveUnitState(unit.id, unit.category, reqIds, answers, 0);
-    }
-  }, [answers, unit.id, unit.category, unit.questions]);
-
-  // --- Speech Recognition Setup ---
-  // We use standard React refs to maintain the recognition instance across re-renders.
-  const [isRecording, setIsRecording] = useState(false);
-  const recognitionRef = useRef<any>(null);
-
-  /**
-   * Initializes the native Web Speech API instance securely upon mount.
-   * Uses `webkitSpeechRecognition` (prefix required for many Chromium/Safari versions).
-   * Note: This only works in secure (HTTPS) contexts in production.
-   */
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition ||
-        (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const reco = new SpeechRecognition();
-        reco.continuous = true;
-        reco.interimResults = true;
-        reco.lang = "en-US";
-        recognitionRef.current = reco;
-      }
-    }
-  }, []);
-
-  // Helper selectors for pagination
-  const questions = unit.questions || [];
-  const currentQ = questions[currentStep];
-
-  const handleNext = () => {
-    if (currentStep < questions.length - 1) {
-      setCurrentStep(currentStep + 1);
-    }
-  };
-
-  const handlePrev = () => {
-    if (currentStep > 0) {
-      setCurrentStep(currentStep - 1);
-    }
-  };
-
-  /**
-   * handleSubmitAll:
-   * Orchestrates the final submission for subjective tasks.
-   * 1. Aggregates responses from all parts of the current flow.
-   * 2. Prompts user if any parts are empty.
-   * 3. Sends them to the GPT-powered subjective evaluation endpoint.
-   */
   const handleSubmitAll = async () => {
-    if (!allFlowIds || allFlowIds.length === 0) return;
+    if (!allFlowIds.length) return;
 
     let hasEmpty = false;
-    const allSubs: any[] = [];
+    const submissions: BatchSubmission[] = [];
 
     for (const id of allFlowIds) {
       const state = getUnitState(id);
-      const ans = state.answers;
-      const reqIds = state.reqIds;
+      const userAnswers = Object.fromEntries(
+        Object.entries(state.answers).map(([key, value]) => [
+          key,
+          Array.isArray(value) ? value.join(" ") : value,
+        ]),
+      );
 
-      // Validate all required questions have input
-      for (const qId of reqIds) {
-        if (!ans[qId] || String(ans[qId]).trim().length === 0) {
+      for (const questionId of state.reqIds) {
+        if (!userAnswers[questionId] || userAnswers[questionId].trim().length === 0) {
           hasEmpty = true;
         }
       }
 
-      allSubs.push({
+      submissions.push({
         unitId: id,
-        userAnswers: ans,
-        timeSpent: state.timeSpent || 0,
+        userAnswers,
+        timeSpent: state.timeSpent,
         category: state.category,
       });
     }
 
-    if (hasEmpty) {
-      const confirm = window.confirm("您还有未作答的题目，确定要全部提交吗？");
-      if (!confirm) return;
+    if (hasEmpty && !window.confirm("您还有未作答的题目，确定要全部提交吗？")) {
+      return;
     }
 
     setLoading(true);
 
     try {
-      const promises = allSubs.map((sub) => {
-        const endpoint =
-          sub.category === "Writing" || sub.category === "Speaking"
-            ? "/api/eval/subjective"
-            : "/api/eval/objective";
+      const responses = await Promise.all(
+        submissions.map(async (submission) => {
+          const endpoint =
+            submission.category === "Writing" || submission.category === "Speaking"
+              ? "/api/eval/subjective"
+              : "/api/eval/objective";
 
-        return fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            unitId: sub.unitId,
-            userAnswers: sub.userAnswers,
-            timeSpent: sub.timeSpent,
-          }),
-        })
-          .then((r) => r.json())
-          .then((data) => ({ unitId: sub.unitId, ...data }));
-      });
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              unitId: submission.unitId,
+              userAnswers: submission.userAnswers,
+              timeSpent: submission.timeSpent,
+            }),
+          });
 
-      const results = await Promise.all(promises);
+          const json = (await response.json()) as { data?: SubjectiveEvaluation };
+          return { unitId: submission.unitId, data: json.data };
+        }),
+      );
 
-      // Distribute results back to the wrapper to switch into 'Result/Review' mode
-      for (const r of results) {
-        if (r.data) {
-          onResult(r.data, r.unitId);
+      responses.forEach((response) => {
+        if (response.data) {
+          onResult(response.data, response.unitId);
         }
-      }
-    } catch (e) {
-      console.error("Batch submission failed:", e);
+      });
+    } catch (error) {
+      console.error("Batch submission failed:", error);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  if (!currentQ) return <div>No Questions Available</div>;
+  if (!currentQuestion) {
+    return <div>No Questions Available</div>;
+  }
+
+  const evaluation = (result ?? null) as SubjectiveEvaluation | null;
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Restore State Dialog */}
       <AlertDialog
-        open={showRestorePrompt}
-        onOpenChange={(val: boolean) => {
-          if (!val) return;
-          setShowRestorePrompt(val);
+        open={shouldPromptRestore}
+        onOpenChange={(open) => {
+          if (!open) setDismissedRestorePrompt(true);
         }}
       >
-        <AlertDialogContent className="max-w-md">
+        <AlertDialogContent className="max-w-md rounded-3xl border-white/60 bg-white/90 backdrop-blur-xl">
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center justify-center gap-2 text-orange-600 mb-2">
-              <span className="bg-orange-100 p-1 rounded-full flex items-center justify-center">
-                <svg
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="12" y1="8" x2="12" y2="12"></line>
-                  <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                </svg>
-              </span>
+            <AlertDialogTitle className="text-center text-lg text-gray-900">
+              检测到上次未完成的主观题进度
             </AlertDialogTitle>
-            <AlertDialogTitle className="text-center text-lg">
-              上次有未完成的答题记录，是否继续作答？
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-center text-sm mt-1">
-              继续作答将保留之前的进度。重新作答将清空记录。
+            <AlertDialogDescription className="text-center text-sm text-gray-500">
+              你可以继续上次作答，也可以清空缓存重新开始。
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="sm:justify-center flex-row gap-4 mt-4 w-full">
-            <Button
-              variant="outline"
-              onClick={handleRestoreState}
-              className="flex-1"
-            >
+          <AlertDialogFooter className="flex w-full flex-row gap-3 sm:justify-center">
+            <Button variant="outline" className="flex-1" onClick={handleRestoreState}>
               继续作答
             </Button>
-            <Button
-              variant="default"
-              onClick={handleDiscardState}
-              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              重新作答
+            <Button className="flex-1 bg-gray-900 text-white hover:bg-gray-800" onClick={handleDiscardState}>
+              重新开始
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Internal Step Controller if multiple questions in one unit */}
       {questions.length > 1 && (
-        <div className="flex justify-between items-center text-sm font-medium text-gray-500 bg-gray-100 p-2 rounded">
+        <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white/70 px-4 py-3 text-sm font-medium text-slate-600 backdrop-blur-sm">
           <span>
-            Part {currentStep + 1} of {questions.length}
+            Part {currentStep + 1} / {questions.length}
           </span>
           <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              disabled={currentStep === 0}
-              onClick={handlePrev}
-            >
+            <Button variant="ghost" disabled={currentStep === 0} onClick={() => setCurrentStep((step) => step - 1)}>
               Prev
             </Button>
             <Button
               variant="ghost"
               disabled={currentStep === questions.length - 1}
-              onClick={handleNext}
+              onClick={() => setCurrentStep((step) => step + 1)}
             >
               Next
             </Button>
@@ -280,115 +282,119 @@ export default function SubjectiveRenderer({
         </div>
       )}
 
-      {/* Main Layout: Split into Left and Right Columns on large screens (Prompt on Right per user request) */}
-      <div className="flex flex-col lg:flex-row-reverse gap-8 items-stretch">
-        {/* LEFT COLUMN: Prompt Document (Image/Graph/Text) */}
-        <div className="w-full lg:w-1/2 flex flex-col min-h-[600px]">
-          <Card className="overflow-auto border border-gray-200 p-6 bg-white flex-1 shadow-sm rounded-2xl">
-            <div className="prose max-w-none break-words text-[15px] leading-relaxed">
-              {parse(currentQ.stem || "", imageFixingOptions)}
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+        <Card className="min-h-[600px] overflow-hidden rounded-[2rem] border-white/60 bg-white/80 shadow-[0_30px_80px_rgba(15,23,42,0.08)] backdrop-blur-2xl">
+          <CardContent className="p-8 lg:p-10">
+            <div className="mb-6 flex items-center justify-between gap-4 border-b border-slate-100 pb-5">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">
+                  Prompt Surface
+                </p>
+                <h2 className="mt-2 text-2xl font-black text-slate-900">
+                  {isWriting ? "写作题面" : "口语题卡"}
+                </h2>
+              </div>
+              <div className="rounded-full border border-blue-100 bg-blue-50 px-4 py-1.5 text-xs font-bold text-blue-700">
+                {isWriting ? "Structured Writing" : "Live Speaking"}
+              </div>
             </div>
-          </Card>
-        </div>
+            <div className="prose max-w-none break-words text-[15px] leading-relaxed text-slate-700">
+              {parse(currentQuestion.stem || "", imageFixingOptions)}
+            </div>
+          </CardContent>
+        </Card>
 
-        {/* RIGHT COLUMN: User Response / AI Feedback */}
-        <div className="w-full lg:w-1/2 flex flex-col">
-          {result ? (
-            <Card className="flex-1 shadow-sm rounded-2xl bg-blue-50/50 border-blue-100 border">
-              <CardContent className="p-6 flex flex-col gap-4">
-                <h3 className="text-xl font-bold mb-2 text-gray-900">
-                  AI Evaluation Feedback
+        {evaluation ? (
+          <Card className="rounded-[2rem] border-blue-100 bg-gradient-to-br from-blue-50 via-white to-cyan-50 shadow-[0_25px_70px_rgba(59,130,246,0.12)]">
+            <CardContent className="flex h-full flex-col gap-6 p-8 lg:p-10">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.24em] text-blue-500">
+                  AI Feedback
+                </p>
+                <h3 className="mt-2 text-2xl font-black text-slate-900">
+                  已生成本题型评估结果
                 </h3>
-
-                {/* AI Dimension Scores: Breakdown by TR, CC, LR, GRA */}
-                <div className="grid grid-cols-4 gap-4 mb-6">
-                  {["TR", "CC", "LR", "GRA"].map((dim) => (
-                    <div
-                      key={dim}
-                      className="border border-white/60 p-4 rounded-2xl text-center bg-white/80 shadow-sm backdrop-blur-sm"
-                    >
-                      <p className="text-xs text-gray-500 uppercase font-semibold mb-1">
-                        {dim} Score
-                      </p>
-                      <p className="text-3xl font-black text-blue-600">
-                        {result.aiEvaluation?.dimensions?.[dim] ?? "N/A"}
-                      </p>
-                    </div>
-                  ))}
+              </div>
+              <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+                {["TR", "CC", "LR", "GRA"].map((dimension) => (
+                  <div
+                    key={dimension}
+                    className="rounded-2xl border border-white/80 bg-white/90 p-4 text-center shadow-sm"
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      {dimension}
+                    </p>
+                    <p className="mt-2 text-3xl font-black text-blue-600">
+                      {evaluation.aiEvaluation?.dimensions?.[dimension] ?? "N/A"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <div className="flex-1 rounded-[1.5rem] border border-white/80 bg-white/90 p-6 text-[15px] leading-relaxed text-slate-700 shadow-sm whitespace-pre-wrap">
+                {evaluation.aiEvaluation?.summary || "No feedback summary generated."}
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-[0_25px_70px_rgba(15,23,42,0.06)] backdrop-blur-xl">
+              <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 pb-4">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">
+                    Response Studio
+                  </p>
+                  <h3 className="mt-2 text-2xl font-black text-slate-900">
+                    {isWriting ? "撰写你的答卷" : "记录你的回答"}
+                  </h3>
                 </div>
-
-                <div className="prose text-[15px] bg-white p-6 rounded-2xl border border-white/60 shadow-sm whitespace-pre-wrap leading-relaxed text-gray-700 flex-1">
-                  {result.aiEvaluation?.summary ||
-                    "No feedback summary generated."}
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="flex flex-col gap-3 flex-1">
-              <div className="flex justify-between items-end mb-1">
-                <span className="font-bold text-gray-700 text-lg">
-                  {isWriting ? "撰写你的答卷:" : "Your response:"}
-                </span>
-
-                <div className="flex items-center gap-4">
-                  {isWriting && (
-                    <div className="bg-blue-50 text-blue-600 px-3 py-1 rounded-lg font-bold text-sm shadow-sm border border-blue-100">
-                      Words:{" "}
-                      {answers[currentQ.id]
-                        ? answers[currentQ.id]
-                            .trim()
-                            .split(/\s+/)
-                            .filter((w: string) => w.length > 0).length
-                        : 0}
+                <div className="flex items-center gap-3">
+                  {isWriting ? (
+                    <div className="rounded-full border border-emerald-100 bg-emerald-50 px-4 py-1.5 text-sm font-bold text-emerald-700">
+                      Words: {answers[currentQuestion.id]?.trim().split(/\s+/).filter(Boolean).length || 0}
                     </div>
-                  )}
-
-                  {!isWriting && (
+                  ) : (
                     <Button
                       variant={isRecording ? "destructive" : "secondary"}
-                      className="rounded-xl shadow-sm"
+                      className="rounded-full px-5"
                       onClick={() => {
-                        if (isRecording) {
-                          recognitionRef.current?.stop();
-                          setIsRecording(false);
-                        } else {
-                          if (recognitionRef.current) {
-                            recognitionRef.current.onresult = (event: any) => {
-                              let finalTranscript = "";
-                              for (
-                                let i = event.resultIndex;
-                                i < event.results.length;
-                                ++i
-                              ) {
-                                if (event.results[i].isFinal)
-                                  finalTranscript +=
-                                    event.results[i][0].transcript;
-                              }
-                              if (finalTranscript) {
-                                setAnswers((prev) => ({
-                                  ...prev,
-                                  [currentQ.id]:
-                                    (prev[currentQ.id] || "") +
-                                    " " +
-                                    finalTranscript.trim(),
-                                }));
-                              }
-                            };
-                            recognitionRef.current.onerror = (e: any) =>
-                              console.error("Speech Error", e);
-                            recognitionRef.current.start();
-                            setIsRecording(true);
-                          } else {
-                            alert(
-                              "Your browser does not support speech recognition. Please use Chrome or Edge.",
-                            );
-                          }
+                        const recognition = recognitionRef.current;
+                        if (!recognition) {
+                          window.alert("Your browser does not support speech recognition. Please use Chrome or Edge.");
+                          return;
                         }
+
+                        if (isRecording) {
+                          recognition.stop();
+                          setIsRecording(false);
+                          return;
+                        }
+
+                        recognition.onresult = (event) => {
+                          let finalTranscript = "";
+
+                          for (let i = event.resultIndex; i < event.results.length; i += 1) {
+                            const resultItem = event.results[i];
+                            if (resultItem?.isFinal) {
+                              finalTranscript += resultItem[0].transcript;
+                            }
+                          }
+
+                          if (finalTranscript.trim()) {
+                            setAnswers((previous) => ({
+                              ...previous,
+                              [currentQuestion.id]: `${previous[currentQuestion.id] || ""} ${finalTranscript.trim()}`.trim(),
+                            }));
+                          }
+                        };
+                        recognition.onerror = (error) => {
+                          console.error("Speech Error", error);
+                          setIsRecording(false);
+                        };
+                        recognition.start();
+                        setIsRecording(true);
                       }}
                     >
-                      <Mic
-                        className={`w-4 h-4 mr-2 ${isRecording ? "animate-pulse text-white" : ""}`}
-                      />
+                      <Mic className={`mr-2 h-4 w-4 ${isRecording ? "animate-pulse text-white" : ""}`} />
                       {isRecording ? "Stop Recording" : "Start Recording"}
                     </Button>
                   )}
@@ -396,52 +402,47 @@ export default function SubjectiveRenderer({
               </div>
 
               <textarea
-                className="w-full flex-1 min-h-[500px] border-2 border-gray-200 rounded-2xl p-6 text-base leading-relaxed focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 focus:outline-none resize-none shadow-inner bg-white/80 backdrop-blur-sm transition-all"
+                className="mt-5 min-h-[520px] w-full resize-none rounded-[1.5rem] border-2 border-slate-200 bg-slate-50/80 p-6 text-base leading-relaxed text-slate-900 shadow-inner outline-none transition-all focus:border-blue-500 focus:ring-4 focus:ring-blue-500/15"
                 placeholder={
                   isWriting
-                    ? "Start typing..."
-                    : "Click Start Recording to dictate your answer using Web Speech API, or manually type."
-                }
-                value={answers[currentQ.id] || ""}
-                onChange={(e) =>
-                  setAnswers({ ...answers, [currentQ.id]: e.target.value })
+                    ? "Start typing your response..."
+                    : "Click Start Recording to dictate your answer, or type it manually."
                 }
                 spellCheck={false}
+                value={answers[currentQuestion.id] || ""}
+                onChange={(event) =>
+                  setAnswers((previous) => ({
+                    ...previous,
+                    [currentQuestion.id]: event.target.value,
+                  }))
+                }
               />
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* 提交控制器 */}
-      {!result && (
-        <div className="flex justify-end pt-4 mt-4">
-          {currentStep < questions.length - 1 ? (
-            <Button
-              size="lg"
-              variant="secondary"
-              className="rounded-xl font-bold"
-              onClick={handleNext}
-            >
-              继续作答本题型 Part {currentStep + 2}
-            </Button>
-          ) : isLastPart ? (
-            <Button
-              size="lg"
-              className="rounded-xl px-8 h-12 shadow-md bg-gray-900 hover:bg-gray-800 font-bold"
-              onClick={handleSubmitAll}
-              disabled={loading}
-            >
-              {loading ? "提交并评估中..." : "全卷提交并评估"}
-            </Button>
-          ) : (
-            <div className="text-gray-500 font-medium text-sm mt-2 animate-pulse flex items-center justify-end gap-2 pr-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              自动保存中
+            <div className="flex justify-end pt-2">
+              {currentStep < questions.length - 1 ? (
+                <Button size="lg" variant="secondary" className="rounded-full px-6" onClick={() => setCurrentStep((step) => step + 1)}>
+                  继续作答 Part {currentStep + 2}
+                </Button>
+              ) : isLastPart ? (
+                <Button
+                  size="lg"
+                  className="rounded-full bg-gray-900 px-8 text-white shadow-lg hover:bg-gray-800"
+                  onClick={handleSubmitAll}
+                  disabled={loading}
+                >
+                  {loading ? "提交并评估中..." : "全卷提交并评估"}
+                </Button>
+              ) : (
+                <div className="flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  自动保存中
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

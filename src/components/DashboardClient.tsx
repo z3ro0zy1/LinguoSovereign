@@ -1,27 +1,24 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useSession, signOut } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-} from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
-import {
-  BookOpen,
-  Headphones,
-  Settings,
-  Mic,
-  Edit3,
   ArrowRight,
+  BarChart3,
+  BookOpen,
+  BrainCircuit,
+  Edit3,
+  Headphones,
   List as ListIcon,
+  type LucideIcon,
+  Mic,
+  Search,
+  Settings,
+  Sparkles,
 } from "lucide-react";
-import { formatIELTSTitle } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -36,986 +33,761 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
+import { formatIELTSTitle } from "@/lib/utils";
 
-/**
- * DashboardClient Component
- *
- * The main landing interface for authenticated users. It serves as a central orchestrator for:
- * 1. Navigating between IELTS modules (Reading, Listening, Writing, Speaking).
- * 2. Browsing and filtering the question bank by Cambridge 'Book' and 'Test' numbers.
- * 3. Viewing high-level engagement stats and personal records.
- */
-export default function DashboardClient({ allUnits }: { allUnits: any[] }) {
-  const { data: session, status } = useSession();
+type DashboardTab =
+  | "home"
+  | "Reading"
+  | "Listening"
+  | "Writing"
+  | "Speaking"
+  | "FullTest";
 
-  // Tab definitions for the internal routing of the dashboard
-  type TabType =
-    | "home"
-    | "Reading"
-    | "Listening"
-    | "Writing"
-    | "Speaking"
-    | "FullTest";
-  const [activeTab, setActiveTab] = useState<TabType>("home");
+type ModuleTab = Exclude<DashboardTab, "home" | "FullTest">;
 
-  const categories = ["Reading", "Listening", "Writing", "Speaking"];
+type DashboardUnit = {
+  id: string;
+  title: string;
+  category: string;
+  createdAt?: string | Date;
+};
 
-  // Local state for user's past submission history, used for "Last Attempt" displays
-  const [history, setHistory] = useState<any[]>([]);
+type HistoryEntry = {
+  id: string;
+  unitId: string;
+  category: ModuleTab;
+  unitTitle: string;
+  score: number;
+  date: string;
+  timeSpent?: number;
+};
 
-  // Fetch performance data on mount or session change
-  useEffect(() => {
-    if (session?.user) {
-      fetch("/api/analytics")
-        .then((r) => r.json())
-        .then((d) => {
-          if (d.history) setHistory(d.history);
-        })
-        .catch(console.error);
-    }
-  }, [session]);
+type AnalyticsPayload = {
+  history?: HistoryEntry[];
+};
 
-  /**
-   * currentStats: Calculates contextual stats based on the currently selected tab.
-   * e.g., if on the 'Reading' tab, it shows total 'Reading' tests and the personal best.
-   */
-  const currentStats = useMemo(() => {
-    let filteredHistory = history;
-    if (activeTab === "Reading") {
-      filteredHistory = history.filter(
-        (h) => h.category === "Reading" || h.category === "Reading/Listening",
-      );
-    } else if (activeTab === "Listening") {
-      filteredHistory = history.filter(
-        (h) => h.category === "Listening" || h.category === "Reading/Listening",
-      );
-    } else if (activeTab === "Writing") {
-      filteredHistory = history.filter((h) => h.category === "Writing");
-    } else if (activeTab === "Speaking") {
-      filteredHistory = history.filter((h) => h.category === "Speaking");
-    }
+type ModuleConfig = {
+  label: string;
+  short: string;
+  description: string;
+  icon: LucideIcon;
+  accent: string;
+  soft: string;
+};
 
-    const testCount = filteredHistory.length;
-    let bestScore = 0;
-    filteredHistory.forEach((h) => {
-      const score = parseFloat(h.score);
-      if (!isNaN(score) && score > bestScore) {
-        bestScore = score;
-      }
-    });
+const MODULES: Record<ModuleTab, ModuleConfig> = {
+  Reading: {
+    label: "模考阅读",
+    short: "Reading",
+    description: "精确定位段落、同义替换与题型策略。",
+    icon: BookOpen,
+    accent: "text-sky-700",
+    soft: "from-sky-100 via-white to-cyan-50",
+  },
+  Listening: {
+    label: "自动听力",
+    short: "Listening",
+    description: "原声材料、转录联动与复盘更顺滑。",
+    icon: Headphones,
+    accent: "text-indigo-700",
+    soft: "from-indigo-100 via-white to-blue-50",
+  },
+  Writing: {
+    label: "精批写作",
+    short: "Writing",
+    description: "TR / CC / LR / GRA 维度反馈直达问题。",
+    icon: Edit3,
+    accent: "text-emerald-700",
+    soft: "from-emerald-100 via-white to-teal-50",
+  },
+  Speaking: {
+    label: "流式口语",
+    short: "Speaking",
+    description: "实时录入、机考式作答与答后点评。",
+    icon: Mic,
+    accent: "text-amber-700",
+    soft: "from-amber-100 via-white to-orange-50",
+  },
+};
 
-    return {
-      count: testCount || "0",
-      best: bestScore > 0 ? bestScore : "暂无",
-    };
-  }, [history, activeTab]);
+function getBookLabel(title: string) {
+  const match = title.match(/(?:剑|C)(\d+)/i);
+  return match ? `Cambridge ${match[1]}` : "Other";
+}
 
-  // Global statistics for the question bank (calculated from the full JSON payload)
-  const stats = useMemo(() => {
-    return {
-      reading: allUnits.filter(
-        (u) =>
-          u.category === "Reading/Listening" && u.title.includes("Passage"),
-      ).length,
-      listening: allUnits.filter(
-        (u) => u.category === "Reading/Listening" && u.title.includes("Part"),
-      ).length,
-      writing: allUnits.filter((u) => u.category === "Writing").length,
-      speaking: allUnits.filter((u) => u.category === "Speaking").length,
-    };
-  }, [allUnits]);
+function getTestLabel(title: string) {
+  const match = title.match(/(?:Test|T)[\s-]*(\d+)/i);
+  return match ? `Test ${match[1]}` : "Independent";
+}
 
-  /**
-   * books: Extracts all unique 'Cambridge Book' titles (e.g., C15, C16)
-   * used to populate the main filter dropdown.
-   */
-  const books = useMemo(() => {
-    const bookSet = new Set<string>();
-    allUnits.forEach((u) => {
-      const bookMatch = u.title.match(/(?:剑|C)(\d+)/i);
-      if (bookMatch) {
-        bookSet.add(`Cambridge ${bookMatch[1]}`);
-      } else {
-        bookSet.add("Other");
-      }
-    });
+function getNumericSuffix(value: string) {
+  return Number.parseInt(value.replace(/[^0-9]/g, ""), 10) || 0;
+}
 
-    const sortedList = Array.from(bookSet).sort((a, b) => {
-      const numA = parseInt(a.replace(/[^0-9]/g, "")) || 0;
-      const numB = parseInt(b.replace(/[^0-9]/g, "")) || 0;
-      return numA - numB;
-    });
+function formatScore(score: number | null | undefined) {
+  if (score === null || score === undefined || Number.isNaN(score)) return "--";
+  return (Math.round(score * 2) / 2).toFixed(1);
+}
 
-    if (sortedList.includes("Other")) {
-      const withouthOther = sortedList.filter((b) => b !== "Other");
-      return [...withouthOther, "Other"];
-    }
-    return sortedList;
-  }, [allUnits]);
+function formatHistoryDate(value: string) {
+  return new Date(value).toLocaleString();
+}
 
-  // Selected filter state for the book selector
-  const [selectedBook, setSelectedBook] = useState<string>(books[0] || "Other");
+function isUnitInModule(unit: DashboardUnit, tab: DashboardTab) {
+  if (tab === "Reading") {
+    return unit.category === "Reading/Listening" && unit.title.includes("Passage");
+  }
+  if (tab === "Listening") {
+    return unit.category === "Reading/Listening" && unit.title.includes("Part");
+  }
+  if (tab === "Writing") return unit.category === "Writing";
+  if (tab === "Speaking") return unit.category === "Speaking";
+  return true;
+}
 
-  // A memoized list of units belonging to the currently selected book.
-  const activeUnits = useMemo(() => {
-    return allUnits.filter((u) => {
-      const bookMatch = u.title.match(/(?:剑|C)(\d+)/i);
-      const b = bookMatch ? `Cambridge ${bookMatch[1]}` : "Other";
-      return b === selectedBook;
-    });
-  }, [allUnits, selectedBook]);
+function getUnitShortTitle(title: string) {
+  const formatted = formatIELTSTitle(title);
+  return formatted.replace(/Cambridge \d+ Test \d+ /i, "").trim() || formatted;
+}
+
+function getGroupedTests(units: DashboardUnit[]) {
+  const groups = new Map<string, DashboardUnit[]>();
+
+  units.forEach((unit) => {
+    const testLabel = getTestLabel(unit.title);
+    const current = groups.get(testLabel) || [];
+    current.push(unit);
+    groups.set(testLabel, current);
+  });
+
+  return Array.from(groups.entries()).sort((a, b) => {
+    const numericDiff = getNumericSuffix(a[0]) - getNumericSuffix(b[0]);
+    if (numericDiff !== 0) return numericDiff;
+    return a[0].localeCompare(b[0], undefined, { numeric: true });
+  });
+}
+
+function HeroMetric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-[1.75rem] border border-white/70 bg-white/70 px-5 py-4 shadow-[0_18px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl">
+      <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">{label}</p>
+      <p className="mt-3 text-3xl font-black tracking-tight text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+function ModuleShortcut({
+  tab,
+  active,
+  count,
+  onClick,
+}: {
+  tab: ModuleTab;
+  active: boolean;
+  count: number;
+  onClick: () => void;
+}) {
+  const config = MODULES[tab];
+  const Icon = config.icon;
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] relative pb-24 font-sans selection:bg-blue-200">
-      {/* Ambient background for frosted glass contrast (Apple-style localized glowing orbs) */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10 bg-gradient-to-br from-[#f2f4f8] to-[#e8eaf6]">
-        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-blue-300/30 rounded-full blur-[120px]"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] bg-indigo-300/20 rounded-full blur-[150px]"></div>
-        <div className="absolute top-[30%] right-[10%] w-[40%] h-[40%] bg-purple-200/30 rounded-full blur-[100px]"></div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group rounded-[1.8rem] border p-5 text-left transition-all ${
+        active
+          ? "border-slate-900 bg-slate-900 text-white shadow-[0_22px_45px_rgba(15,23,42,0.22)]"
+          : `border-white/70 bg-gradient-to-br ${config.soft} shadow-[0_18px_40px_rgba(15,23,42,0.06)] hover:-translate-y-0.5`
+      }`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className={`rounded-2xl p-3 ${active ? "bg-white/12" : "bg-white/80"}`}>
+          <Icon className={`h-5 w-5 ${active ? "text-white" : config.accent}`} />
+        </div>
+        <Badge className={active ? "bg-white/12 text-white hover:bg-white/12" : "bg-slate-900 text-white hover:bg-slate-900"}>
+          {count} 套
+        </Badge>
       </div>
+      <h3 className="mt-6 text-xl font-black tracking-tight">{config.label}</h3>
+      <p className={`mt-2 text-sm ${active ? "text-white/72" : "text-slate-600"}`}>{config.description}</p>
+    </button>
+  );
+}
 
-      {/* Top Navigation - Apple Glassmorphism */}
-      <nav className="fixed top-0 z-50 w-full bg-white/50 backdrop-blur-2xl border-b border-white/40 px-8 py-4 flex items-center justify-between shadow-[0_4px_30px_rgba(0,0,0,0.03)]">
-        <div
-          className="flex items-center gap-3 cursor-pointer"
-          onClick={() => setActiveTab("home")}
+function EmptyState({ title, icon }: { title: string; icon: ReactNode }) {
+  return (
+    <div className="flex min-h-[280px] flex-col items-center justify-center rounded-[2rem] border border-dashed border-slate-200 bg-white/75 px-6 text-center shadow-[0_15px_35px_rgba(15,23,42,0.04)] backdrop-blur-xl">
+      <div className="mb-5 rounded-full border border-slate-200 bg-slate-50 p-4">{icon}</div>
+      <p className="text-base font-semibold text-slate-600">{title}</p>
+    </div>
+  );
+}
+
+function TestGroupedView({
+  units,
+  history,
+}: {
+  units: DashboardUnit[];
+  history: HistoryEntry[];
+}) {
+  if (!units.length) {
+    return <EmptyState title="当前筛选条件下没有对应题组。" icon={<Sparkles className="h-5 w-5 text-slate-500" />} />;
+  }
+
+  const groups = getGroupedTests(units);
+
+  return (
+    <div className="space-y-6">
+      {groups.map(([testLabel, items]) => (
+        <section
+          key={testLabel}
+          className="overflow-hidden rounded-[2rem] border border-white/70 bg-white/78 shadow-[0_24px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl"
         >
-          <div className="w-9 h-9 bg-gray-900 rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-sm">
-            LS
+          <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-6 py-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">Module Batch</p>
+              <h3 className="mt-1 text-xl font-black text-slate-900">{testLabel}</h3>
+            </div>
+            <Badge className="bg-slate-900 text-white hover:bg-slate-900">{items.length} 项</Badge>
           </div>
-          <div className="flex flex-col">
-            <span className="text-[13px] font-black tracking-[0.2em] text-gray-900 leading-tight">
-              LINGUOSOVEREIGN
-            </span>
-            <span className="text-[11px] font-medium text-gray-500 tracking-widest leading-tight">
-              语言主权 AI赋能
-            </span>
+          <div className="divide-y divide-slate-100">
+            {items
+              .slice()
+              .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true }))
+              .map((unit) => {
+                const attempts = history
+                  .filter((entry) => entry.unitId === unit.id)
+                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                const latest = attempts[0];
+
+                return (
+                  <div key={unit.id} className="grid gap-5 px-6 py-5 lg:grid-cols-[minmax(0,1.2fr)_200px_180px_220px] lg:items-center">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-400">{formatIELTSTitle(unit.title)}</p>
+                      <h4 className="mt-1 text-lg font-bold text-slate-900">{getUnitShortTitle(unit.title)}</h4>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Latest Score</p>
+                      <p className="mt-2 text-xl font-black text-slate-900">{latest ? formatScore(latest.score) : "--"}</p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Attempt History</p>
+                      <div className="mt-2 text-sm text-slate-600">
+                        {attempts.length ? (
+                          <Dialog>
+                            <DialogTrigger asChild>
+                              <button type="button" className="font-semibold text-slate-900 underline decoration-dashed underline-offset-4">
+                                {attempts.length} 次练习记录
+                              </button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-xl rounded-[2rem] border-white/70 bg-white/92 backdrop-blur-2xl">
+                              <DialogHeader>
+                                <DialogTitle>{formatIELTSTitle(unit.title)}</DialogTitle>
+                              </DialogHeader>
+                              <div className="space-y-3">
+                                {attempts.map((attempt, index) => (
+                                  <div key={attempt.id} className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/80 p-4">
+                                    <div>
+                                      <p className="font-semibold text-slate-900">第 {attempts.length - index} 次练习</p>
+                                      <p className="text-sm text-slate-500">{formatHistoryDate(attempt.date)}</p>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                      <span className="text-sm font-bold text-slate-800">Band {formatScore(attempt.score)}</span>
+                                      <Link href={`/review/${unit.id}?submissionId=${attempt.id}`} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">
+                                        查看详解
+                                      </Link>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </DialogContent>
+                          </Dialog>
+                        ) : (
+                          <span className="font-medium text-slate-400">未作答</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap justify-start gap-3 lg:justify-end">
+                      <Link href={`/eval/${unit.id}`}>
+                        <Button className="rounded-full bg-slate-900 px-5 text-white hover:bg-slate-800">
+                          {latest ? "继续作答" : "开始作答"}
+                        </Button>
+                      </Link>
+                      <Link href={`/review/${unit.id}`}>
+                        <Button variant="outline" className="rounded-full px-5">
+                          <ListIcon className="mr-2 h-4 w-4" /> 详解
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
           </div>
-        </div>
+        </section>
+      ))}
+    </div>
+  );
+}
 
-        <div className="hidden lg:flex gap-10 text-sm font-semibold text-gray-500">
-          <span
-            onClick={() => setActiveTab("Reading")}
-            className={`cursor-pointer transition ${activeTab === "Reading" ? "text-blue-600 font-bold" : "hover:text-gray-900"}`}
-          >
-            模考阅读
-          </span>
-          <span
-            onClick={() => setActiveTab("Listening")}
-            className={`cursor-pointer transition ${activeTab === "Listening" ? "text-blue-600 font-bold" : "hover:text-gray-900"}`}
-          >
-            自动听力
-          </span>
-          <span
-            onClick={() => setActiveTab("Writing")}
-            className={`cursor-pointer transition ${activeTab === "Writing" ? "text-blue-600 font-bold" : "hover:text-gray-900"}`}
-          >
-            精批写作
-          </span>
-          <span
-            onClick={() => setActiveTab("Speaking")}
-            className={`cursor-pointer transition ${activeTab === "Speaking" ? "text-blue-600 font-bold" : "hover:text-gray-900"}`}
-          >
-            流式口语
-          </span>
-          <span
-            onClick={() => setActiveTab("FullTest")}
-            className={`cursor-pointer transition ${activeTab === "FullTest" ? "text-blue-600 font-bold" : "hover:text-gray-900"}`}
-          >
-            全真考
-          </span>
-        </div>
+function FullTestGroupedView({ units }: { units: DashboardUnit[] }) {
+  if (!units.length) {
+    return <EmptyState title="当前卷册下没有完整模考组合。" icon={<BarChart3 className="h-5 w-5 text-slate-500" />} />;
+  }
 
-        <div className="flex gap-4">
-          {status === "loading" ? (
-            <div className="w-10 h-10 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin"></div>
-          ) : session ? (
-            <div className="flex items-center gap-6">
-              <Link
-                href="/profile"
-                className="font-bold text-blue-600 hover:text-blue-800 transition-colors text-sm flex items-center gap-1"
-              >
-                <Settings className="w-4 h-4" /> 个人资料
-              </Link>
-              <div className="h-4 w-px bg-gray-300"></div>
-              <span className="font-bold text-gray-700">
-                Hi,{" "}
-                {session.user?.name ||
-                  session.user?.email?.split("@")[0] ||
-                  "User"}
-              </span>
-              <Link href="/dashboard/analytics">
-                <Button
-                  variant="outline"
-                  className="font-bold rounded-xl border-gray-300 bg-white/50 text-gray-700 hover:bg-white shadow-[0_2px_10px_rgba(0,0,0,0.03)]"
-                >
-                  数据面板
-                </Button>
-              </Link>
+  const groups = getGroupedTests(units);
+
+  return (
+    <div className="space-y-6">
+      {groups.map(([testLabel, items]) => {
+        const listening = items.find((unit) => isUnitInModule(unit, "Listening"));
+        const reading = items.find((unit) => isUnitInModule(unit, "Reading"));
+        const writing = items.find((unit) => isUnitInModule(unit, "Writing"));
+        const speaking = items.find((unit) => isUnitInModule(unit, "Speaking"));
+
+        const flowIds = items
+          .filter((unit) => unit.category !== "Speaking")
+          .slice()
+          .sort((a, b) => {
+            const weight = (value: DashboardUnit) => {
+              if (isUnitInModule(value, "Listening")) return 1;
+              if (isUnitInModule(value, "Reading")) return 2;
+              if (isUnitInModule(value, "Writing")) return 3;
+              return 4;
+            };
+            const diff = weight(a) - weight(b);
+            if (diff !== 0) return diff;
+            return a.title.localeCompare(b.title, undefined, { numeric: true });
+          })
+          .map((unit) => unit.id);
+
+        const flowHref = flowIds.length ? `/eval/${flowIds[0]}?flow=${flowIds.join(",")}` : "#";
+
+        return (
+          <section
+            key={testLabel}
+            className="rounded-[2rem] border border-white/70 bg-white/78 p-6 shadow-[0_24px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl"
+          >
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">Full Test Engine</p>
+                <h3 className="mt-1 text-2xl font-black text-slate-900">{testLabel}</h3>
+              </div>
+              {flowIds.length > 0 && (
+                <Link href={flowHref}>
+                  <Button className="rounded-full bg-slate-900 px-6 text-white hover:bg-slate-800">
+                    启动完整模考 <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </Link>
+              )}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {([
+                ["Listening", listening],
+                ["Reading", reading],
+                ["Writing", writing],
+                ["Speaking", speaking],
+              ] as Array<[ModuleTab, DashboardUnit | undefined]>).map(([tab, unit]) => {
+                const config = MODULES[tab];
+                const Icon = config.icon;
+
+                return unit ? (
+                  <Link
+                    key={tab}
+                    href={`/eval/${unit.id}`}
+                    className={`rounded-[1.75rem] border border-white/70 bg-gradient-to-br ${config.soft} p-5 shadow-[0_18px_40px_rgba(15,23,42,0.05)] transition-transform hover:-translate-y-0.5`}
+                  >
+                    <Icon className={`h-6 w-6 ${config.accent}`} />
+                    <h4 className="mt-5 text-lg font-black text-slate-900">{config.short}</h4>
+                    <p className="mt-2 text-sm text-slate-600">{getUnitShortTitle(unit.title)}</p>
+                    <span className="mt-5 inline-flex items-center text-sm font-semibold text-slate-900">
+                      进入单模块 <ArrowRight className="ml-2 h-4 w-4" />
+                    </span>
+                  </Link>
+                ) : (
+                  <div key={tab} className="rounded-[1.75rem] border border-dashed border-slate-200 bg-slate-50/80 p-5 text-slate-400">
+                    <Icon className="h-6 w-6" />
+                    <h4 className="mt-5 text-lg font-black">{config.short}</h4>
+                    <p className="mt-2 text-sm">暂无模块</p>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function DashboardClient({ allUnits }: { allUnits: DashboardUnit[] }) {
+  const { data: session, status } = useSession();
+  const [activeTab, setActiveTab] = useState<DashboardTab>("home");
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [query, setQuery] = useState("");
+  const [selectedBook, setSelectedBook] = useState<string>(getBookLabel(allUnits[0]?.title || "Other"));
+
+  useEffect(() => {
+    if (!session?.user) return;
+
+    const controller = new AbortController();
+
+    fetch("/api/analytics", { signal: controller.signal })
+      .then((response) => response.json())
+      .then((payload: AnalyticsPayload) => {
+        setHistory(payload.history ?? []);
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        console.error(error);
+      });
+
+    return () => controller.abort();
+  }, [session]);
+
+  const books = useMemo(() => {
+    const found = new Set(allUnits.map((unit) => getBookLabel(unit.title)));
+    return Array.from(found).sort((a, b) => {
+      if (a === "Other") return 1;
+      if (b === "Other") return -1;
+      return getNumericSuffix(a) - getNumericSuffix(b);
+    });
+  }, [allUnits]);
+
+  const effectiveSelectedBook = books.includes(selectedBook) ? selectedBook : books[0] || "Other";
+
+  const bankStats = useMemo(
+    () => ({
+      Reading: allUnits.filter((unit) => isUnitInModule(unit, "Reading")).length,
+      Listening: allUnits.filter((unit) => isUnitInModule(unit, "Listening")).length,
+      Writing: allUnits.filter((unit) => isUnitInModule(unit, "Writing")).length,
+      Speaking: allUnits.filter((unit) => isUnitInModule(unit, "Speaking")).length,
+    }),
+    [allUnits],
+  );
+
+  const unitsByBook = useMemo(
+    () => allUnits.filter((unit) => getBookLabel(unit.title) === effectiveSelectedBook),
+    [allUnits, effectiveSelectedBook],
+  );
+
+  const filteredUnits = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return unitsByBook.filter((unit) => {
+      const matchesTab = activeTab === "home" || activeTab === "FullTest" ? true : isUnitInModule(unit, activeTab);
+      const matchesQuery =
+        !normalizedQuery || formatIELTSTitle(unit.title).toLowerCase().includes(normalizedQuery);
+      return matchesTab && matchesQuery;
+    });
+  }, [activeTab, query, unitsByBook]);
+
+  const currentStats = useMemo(() => {
+    const scopedHistory =
+      activeTab === "home" || activeTab === "FullTest"
+        ? history
+        : history.filter((entry) => entry.category === activeTab);
+
+    return {
+      total: scopedHistory.length,
+      best: scopedHistory.length
+        ? Math.max(...scopedHistory.map((entry) => Number(entry.score) || 0))
+        : 0,
+    };
+  }, [activeTab, history]);
+
+  const greeting = session?.user?.name || session?.user?.email?.split("@")[0] || "Scholar";
+
+  return (
+    <div className="relative min-h-screen overflow-hidden bg-[#eef2f7] pb-20 text-slate-900 selection:bg-sky-200/70">
+      <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.18),_transparent_34%),radial-gradient(circle_at_80%_15%,_rgba(251,191,36,0.18),_transparent_28%),linear-gradient(180deg,#f7fafc_0%,#edf2f7_100%)]" />
+      <div className="pointer-events-none fixed inset-0 -z-10 opacity-40 [background-image:linear-gradient(rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.12)_1px,transparent_1px)] [background-size:42px_42px]" />
+
+      <nav className="sticky top-0 z-40 border-b border-white/60 bg-white/72 backdrop-blur-2xl">
+        <div className="mx-auto flex max-w-[1380px] items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
+          <button type="button" onClick={() => setActiveTab("home")} className="flex items-center gap-3 text-left">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-lg font-black text-white shadow-lg shadow-slate-900/15">
+              LS
+            </div>
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.34em] text-slate-500">LinguoSovereign</p>
+              <p className="text-sm font-semibold text-slate-900">AI IELTS Studio</p>
+            </div>
+          </button>
+
+          <div className="hidden items-center gap-2 xl:flex">
+            {(["Reading", "Listening", "Writing", "Speaking", "FullTest"] as DashboardTab[]).map((tab) => (
               <Button
-                onClick={() => signOut()}
+                key={tab}
                 variant="ghost"
-                className="font-bold text-red-600 hover:text-red-700 hover:bg-red-50 rounded-xl"
+                onClick={() => setActiveTab(tab)}
+                className={`rounded-full px-4 ${activeTab === tab ? "bg-slate-900 text-white hover:bg-slate-900" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}
               >
-                登出
+                {tab === "FullTest" ? "全真考" : MODULES[tab as ModuleTab].label}
               </Button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-4">
-              <Link href="/register">
-                <Button
-                  variant="ghost"
-                  className="font-bold text-gray-600 hover:text-gray-900 hover:bg-black/5 rounded-xl"
-                >
-                  注册
+            ))}
+          </div>
+
+          <div className="flex items-center gap-3">
+            {status === "loading" ? (
+              <div className="h-9 w-9 animate-spin rounded-full border-2 border-slate-200 border-t-slate-900" />
+            ) : session ? (
+              <>
+                <div className="hidden text-right md:block">
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Current Candidate</p>
+                  <p className="text-sm font-semibold text-slate-900">{greeting}</p>
+                </div>
+                <Link href="/dashboard/analytics">
+                  <Button variant="outline" className="rounded-full">
+                    <BarChart3 className="mr-2 h-4 w-4" /> 数据面板
+                  </Button>
+                </Link>
+                <Link href="/profile">
+                  <Button variant="ghost" className="rounded-full text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                    <Settings className="mr-2 h-4 w-4" /> 资料
+                  </Button>
+                </Link>
+                <Button onClick={() => signOut()} variant="ghost" className="rounded-full text-red-600 hover:bg-red-50 hover:text-red-700">
+                  登出
                 </Button>
-              </Link>
-              <Link href="/login">
-                <Button className="bg-gray-900 hover:bg-gray-800 text-white font-bold rounded-xl shadow-md border border-gray-800">
-                  登入题库
-                </Button>
-              </Link>
-            </div>
-          )}
+              </>
+            ) : (
+              <>
+                <Link href="/register">
+                  <Button variant="ghost" className="rounded-full text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+                    注册
+                  </Button>
+                </Link>
+                <Link href="/login">
+                  <Button className="rounded-full bg-slate-900 px-5 text-white hover:bg-slate-800">登入题库</Button>
+                </Link>
+              </>
+            )}
+          </div>
         </div>
       </nav>
 
-      <div className="max-w-[1280px] mx-auto pt-40 px-6">
-        {/* Dynamic Main View Rendering based on Active Tab */}
-        {activeTab === "home" && (
+      <main className="mx-auto max-w-[1380px] px-4 pt-8 sm:px-6 lg:px-8">
+        <div className="mb-6 flex gap-2 overflow-x-auto pb-2 xl:hidden">
+          {(["home", "Reading", "Listening", "Writing", "Speaking", "FullTest"] as DashboardTab[]).map((tab) => (
+            <Button
+              key={tab}
+              variant="ghost"
+              onClick={() => setActiveTab(tab)}
+              className={`shrink-0 rounded-full px-4 ${activeTab === tab ? "bg-slate-900 text-white hover:bg-slate-900" : "bg-white/70 text-slate-600 hover:bg-white hover:text-slate-900"}`}
+            >
+              {tab === "home" ? "首页" : tab === "FullTest" ? "全真考" : MODULES[tab as ModuleTab].label}
+            </Button>
+          ))}
+        </div>
+
+        {activeTab === "home" ? (
           <>
-            {/* Hero Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-16 items-center mb-24 animate-in slide-in-from-bottom-3 duration-500">
-              <div className="flex flex-col gap-8">
-                <h1 className="text-5xl md:text-6xl lg:text-[72px] font-extrabold text-gray-900 leading-[1.1] tracking-tight">
-                  让真题、评分标准和语音交互真正服务于你的
-                  <span className="text-blue-600 relative">
-                    雅思提分
-                    <svg
-                      className="absolute w-full h-3 -bottom-1 left-0 text-blue-200 -z-10"
-                      viewBox="0 0 100 10"
-                      preserveAspectRatio="none"
-                    >
-                      <path
-                        d="M0 5 Q 50 10 100 5"
-                        stroke="currentColor"
-                        strokeWidth="8"
-                        fill="transparent"
-                      />
-                    </svg>
+            <section className="grid gap-8 lg:grid-cols-[minmax(0,1.15fr)_440px] lg:items-center">
+              <div>
+                <Badge className="rounded-full bg-slate-900 px-4 py-1 text-white hover:bg-slate-900">
+                  Brand-led IELTS Workspace
+                </Badge>
+                <h1 className="mt-6 max-w-3xl text-3xl font-black leading-[1.15] tracking-tight text-slate-950 md:text-4xl xl:text-[52px]">
+                  更安静地组织真题、评分与复盘。
+                  <span className="mt-2 block bg-gradient-to-r from-sky-600 via-indigo-600 to-amber-500 bg-clip-text text-transparent">
+                    让每次练习都更连贯一点。
                   </span>
-                  。
                 </h1>
-                <p className="text-lg text-gray-500 leading-relaxed max-w-2xl font-medium">
-                  LinguoSovereign 搭载海量本地优质库，与最先进的大语言模型
-                  (LLMs)
-                  无缝集成。通过智能批改、流式化语音录入及自适应提示词工程
-                  (Prompt)，我们正重新定义考培闭环。
+                <p className="mt-5 max-w-2xl text-base leading-8 text-slate-600 md:text-lg">
+                  LinguoSovereign 把 Cambridge 真题、客观题批改、主观题反馈和历史追踪放进同一条练习路径里，界面更克制，推进也更顺手。
                 </p>
-                <div className="flex flex-wrap gap-4 mt-2">
-                  <Button
-                    size="lg"
-                    onClick={() => setActiveTab("FullTest")}
-                    className="rounded-full px-8 h-14 bg-gray-900 hover:bg-gray-800 text-white text-base font-semibold shadow-xl shadow-gray-900/20"
-                  >
-                    开启模考 <ArrowRight className="ml-2 w-5 h-5" />
+                <div className="mt-8 flex flex-wrap gap-3">
+                  <Button onClick={() => setActiveTab("FullTest")} className="rounded-full bg-slate-900 px-6 text-white hover:bg-slate-800">
+                    开启完整模考 <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
                   <Link href="/dashboard/analytics">
-                    <Button
-                      size="lg"
-                      variant="outline"
-                      className="rounded-full px-8 h-14 border-gray-300 text-gray-700 hover:bg-gray-50 text-base font-semibold shadow-sm"
-                    >
+                    <Button variant="outline" className="rounded-full px-6">
                       查看我的数据
                     </Button>
                   </Link>
                 </div>
               </div>
 
-              {/* Stats Section matching reference (Glassmorphism) */}
-              <div className="bg-white/60 backdrop-blur-3xl rounded-[2.5rem] p-8 shadow-[0_20px_60px_rgba(0,0,0,0.05)] border border-white/60 relative overflow-hidden">
-                <div className="flex flex-col gap-4">
-                  <StatCard
-                    title="阅读"
-                    desc="全真阅读篇段"
-                    count={stats.reading}
-                  />
-                  <StatCard
-                    title="听力"
-                    desc="原声听力录音"
-                    count={stats.listening}
-                  />
-                  <StatCard
-                    title="写作"
-                    desc="大作文 / 小作文"
-                    count={stats.writing}
-                  />
-                  <StatCard
-                    title="口语"
-                    desc="Part 1-3 语料"
-                    count={stats.speaking}
-                  />
-                </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <HeroMetric label="Reading Sets" value={bankStats.Reading} />
+                <HeroMetric label="Listening Sets" value={bankStats.Listening} />
+                <HeroMetric label="Writing Tasks" value={bankStats.Writing} />
+                <HeroMetric label="Speaking Parts" value={bankStats.Speaking} />
               </div>
-            </div>
+            </section>
 
-            {/* Learning Insights Section */}
-            <div className="mt-10 animate-in slide-in-from-bottom-5 duration-700">
-              <div className="mb-10">
-                <h2 className="text-3xl font-black text-gray-900 tracking-tight mb-2 text-transparent bg-clip-text bg-gradient-to-r from-gray-900 to-gray-600">
-                  今日学习指北
-                </h2>
-                <p className="text-gray-500 font-medium">
-                  高效备考，拒绝盲目刷题。看看系统为您推荐的策略。
+            <section className="mt-12 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {(Object.keys(MODULES) as ModuleTab[]).map((tab) => (
+                <ModuleShortcut
+                  key={tab}
+                  tab={tab}
+                  count={bankStats[tab]}
+                  active={false}
+                  onClick={() => setActiveTab(tab)}
+                />
+              ))}
+            </section>
+
+            <section className="mt-12 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="rounded-[2rem] border border-white/70 bg-white/78 p-6 shadow-[0_24px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl">
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-5">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">Quick Start</p>
+                    <h2 className="mt-1 text-2xl font-black text-slate-900">先选模块，再直接开做</h2>
+                  </div>
+                  <Badge className="bg-amber-500 text-slate-950 hover:bg-amber-500">No Duplicate Cards</Badge>
+                </div>
+                <div className="mt-6 grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
+                  <div className="rounded-[1.5rem] border border-slate-100 bg-slate-50/80 p-5 text-sm leading-7 text-slate-600">
+                    上面四张模块卡已经是首页主入口。
+                    进入后可按书册筛选、按题名搜索，并在题组中直接查看历史记录与详解；如果要完整模考，就直接点上方“开启完整模考”。
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    <Button onClick={() => setActiveTab("FullTest")} className="h-12 rounded-full bg-slate-900 text-white hover:bg-slate-800">
+                      开启完整模考 <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
+                    <Link href="/dashboard/analytics">
+                      <Button variant="outline" className="h-12 w-full rounded-full">
+                        查看历史与数据
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[2rem] border border-slate-900 bg-slate-900 p-6 text-white shadow-[0_24px_70px_rgba(15,23,42,0.3)]">
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-white/55">Candidate Snapshot</p>
+                <h2 className="mt-2 text-3xl font-black">{greeting}</h2>
+                <p className="mt-3 text-sm leading-6 text-white/72">
+                  从首页进入任一模块后，可以按书册筛选、按题名搜索，并在题组内直接查看历史记录与详解。
                 </p>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                <div className="bg-blue-50/50 backdrop-blur-xl p-8 rounded-[2rem] border border-blue-100 shadow-sm flex flex-col justify-between">
-                  <div>
-                    <div className="w-12 h-12 bg-blue-100 rounded-2xl flex items-center justify-center mb-6">
-                      <BookOpen className="w-6 h-6 text-blue-600" />
-                    </div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-3">
-                      阅读提分策略
-                    </h3>
-                    <p className="text-gray-600 text-[15px] leading-relaxed mb-6 font-medium">
-                      中国考生最易提分的模块。重点在于掌握「同义替换」与「定位词」技巧。建议每天保持2篇泛读，1篇精读。
-                    </p>
+                <div className="mt-8 grid grid-cols-2 gap-4">
+                  <div className="rounded-[1.4rem] border border-white/10 bg-white/5 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-white/50">Attempts</p>
+                    <p className="mt-2 text-2xl font-black">{history.length}</p>
                   </div>
-                  <Button
-                    variant="outline"
-                    className="rounded-xl w-full border-blue-200 text-blue-700 hover:bg-blue-100 font-bold"
-                    onClick={() => setActiveTab("Reading")}
-                  >
-                    去刷阅读
-                  </Button>
-                </div>
-                <div className="bg-indigo-50/50 backdrop-blur-xl p-8 rounded-[2rem] border border-indigo-100 shadow-sm flex flex-col justify-between">
-                  <div>
-                    <div className="w-12 h-12 bg-indigo-100 rounded-2xl flex items-center justify-center mb-6">
-                      <Headphones className="w-6 h-6 text-indigo-600" />
-                    </div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-3">
-                      听力磨耳朵
-                    </h3>
-                    <p className="text-gray-600 text-[15px] leading-relaxed mb-6 font-medium">
-                      每天利用碎片时间泛听历年真题录音，培养语感。针对 Part 3&4
-                      的长单句，推荐使用倍速播放进行高压抗干扰训练。
-                    </p>
+                  <div className="rounded-[1.4rem] border border-white/10 bg-white/5 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-white/50">Best Band</p>
+                    <p className="mt-2 text-2xl font-black">{formatScore(currentStats.best)}</p>
                   </div>
-                  <Button
-                    variant="outline"
-                    className="rounded-xl w-full border-indigo-200 text-indigo-700 hover:bg-indigo-100 font-bold"
-                    onClick={() => setActiveTab("Listening")}
-                  >
-                    自动听力
-                  </Button>
-                </div>
-                <div className="bg-purple-50/50 backdrop-blur-xl p-8 rounded-[2rem] border border-purple-100 shadow-sm flex flex-col justify-between">
-                  <div>
-                    <div className="w-12 h-12 bg-purple-100 rounded-2xl flex items-center justify-center mb-6">
-                      <Edit3 className="w-6 h-6 text-purple-600" />
-                    </div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-3">
-                      写作逐句批改
-                    </h3>
-                    <p className="text-gray-600 text-[15px] leading-relaxed mb-6 font-medium">
-                      不仅看总分，系统能依据四大官方评分维度(TR, CC, LR,
-                      GRA)为您指出语法错误和高级词汇替换，告别废话写作。
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    className="rounded-xl w-full border-purple-200 text-purple-700 hover:bg-purple-100 font-bold"
-                    onClick={() => setActiveTab("Writing")}
-                  >
-                    写作专训
-                  </Button>
                 </div>
               </div>
-            </div>
+            </section>
           </>
-        )}
-
-        {/* Modular / Full Test Views */}
-        {activeTab !== "home" && (
-          <div className="mt-8 animate-in fade-in duration-500 flex flex-col lg:flex-row gap-8">
-            {/* LEFT MAIN AREA: Test Listings */}
-            <div className="flex-1 flex flex-col min-w-0">
-              <div className="flex flex-col md:flex-row justify-between items-end mb-8 gap-6">
-                <div>
-                  <h2 className="text-3xl font-black text-gray-900 tracking-tight mb-2 text-transparent bg-clip-text bg-gradient-to-r from-gray-900 to-gray-600">
-                    {activeTab === "FullTest" ? "全真考引擎" : "单项突破舱"}
-                  </h2>
-                  <p className="text-gray-500 font-medium">
-                    {activeTab === "FullTest"
-                      ? "在这里，您可以像正式机考一样连续完成一套完整的剑桥雅思测试。"
-                      : "在下方选择您想要攻克的剑桥雅思卷宗。"}
-                  </p>
+        ) : (
+          <section className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div>
+              <div className="rounded-[2rem] border border-white/70 bg-white/78 p-6 shadow-[0_24px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl">
+                <div className="flex flex-wrap items-end justify-between gap-5">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">
+                      {activeTab === "FullTest" ? "Full Test Engine" : MODULES[activeTab as ModuleTab].short}
+                    </p>
+                    <h1 className="mt-2 text-3xl font-black text-slate-900 md:text-4xl">
+                      {activeTab === "FullTest" ? "完整模考路径" : MODULES[activeTab as ModuleTab].label}
+                    </h1>
+                    <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">
+                      {activeTab === "FullTest"
+                        ? "先选择书册，再决定是直接进入单模块，还是按 Listening → Reading → Writing 的顺序启动完整模考。"
+                        : MODULES[activeTab as ModuleTab].description}
+                    </p>
+                  </div>
+                  <Badge className="rounded-full bg-slate-900 px-4 py-1 text-white hover:bg-slate-900">{effectiveSelectedBook}</Badge>
                 </div>
 
-                <Select value={selectedBook} onValueChange={setSelectedBook}>
-                  <SelectTrigger className="w-[240px] h-12 text-base rounded-2xl border-white/50 bg-white/60 backdrop-blur-md font-bold shadow-sm focus:ring-blue-500/30">
-                    <SelectValue placeholder="Select a Book" />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl">
-                    {books.map((book) => (
-                      <SelectItem
-                        key={book}
-                        value={book}
-                        className="text-base py-2 cursor-pointer font-medium rounded-lg"
-                      >
-                        {book}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+                  <label className="flex items-center gap-3 rounded-[1.4rem] border border-slate-200 bg-slate-50/80 px-4 py-3">
+                    <Search className="h-4 w-4 text-slate-400" />
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="搜索题目，如 Passage 2 / Task 1 / Cambridge 18"
+                      className="w-full bg-transparent text-sm font-medium text-slate-900 outline-none placeholder:text-slate-400"
+                    />
+                  </label>
+
+                  <Select value={effectiveSelectedBook} onValueChange={setSelectedBook}>
+                    <SelectTrigger className="h-12 rounded-[1.4rem] border-slate-200 bg-slate-50/80 text-base font-semibold shadow-none">
+                      <SelectValue placeholder="选择书册" />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-2xl">
+                      {books.map((book) => (
+                        <SelectItem key={book} value={book} className="rounded-xl py-2">
+                          {book}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
-              {/* Content Rendering By Active Tab */}
-              {activeTab === "Reading" && (
-                <TestGroupedView
-                  units={activeUnits.filter(
-                    (u) =>
-                      u.category === "Reading/Listening" &&
-                      u.title.includes("Passage"),
-                  )}
-                  icon={<BookOpen className="w-5 h-5 text-gray-700" />}
-                  history={history}
-                />
-              )}
-              {activeTab === "Listening" && (
-                <TestGroupedView
-                  units={activeUnits.filter(
-                    (u) =>
-                      u.category === "Reading/Listening" &&
-                      u.title.includes("Part"),
-                  )}
-                  icon={<Headphones className="w-5 h-5 text-gray-700" />}
-                  history={history}
-                />
-              )}
-              {activeTab === "Writing" && (
-                <TestGroupedView
-                  units={activeUnits.filter((u) => u.category === "Writing")}
-                  icon={<Edit3 className="w-5 h-5 text-gray-700" />}
-                  history={history}
-                />
-              )}
-              {activeTab === "Speaking" && (
-                <TestGroupedView
-                  units={activeUnits.filter((u) => u.category === "Speaking")}
-                  icon={<Mic className="w-5 h-5 text-gray-700" />}
-                  history={history}
-                />
-              )}
-              {activeTab === "FullTest" && (
-                <FullTestGroupedView units={activeUnits} />
-              )}
+              <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                {(Object.keys(MODULES) as ModuleTab[]).map((tab) => (
+                  <ModuleShortcut
+                    key={tab}
+                    tab={tab}
+                    count={bankStats[tab]}
+                    active={activeTab === tab}
+                    onClick={() => setActiveTab(tab)}
+                  />
+                ))}
+              </div>
+
+              <div className="mt-8">
+                {activeTab === "FullTest" ? (
+                  <FullTestGroupedView units={filteredUnits} />
+                ) : (
+                  <TestGroupedView units={filteredUnits} history={history} />
+                )}
+              </div>
             </div>
 
-            {/* RIGHT SIDEBAR: User Profile & Stats */}
-            <div className="w-full lg:w-[320px] flex flex-col gap-6 shrink-0 mt-2 lg:mt-[90px]">
-              <div className="bg-white/60 backdrop-blur-2xl rounded-3xl p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/60 flex flex-col items-center">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 p-[3px] mb-4 shadow-md">
-                  <div className="w-full h-full bg-white rounded-full flex items-center justify-center font-black text-2xl text-gray-800">
-                    {session?.user?.name?.[0]?.toUpperCase() ||
-                      session?.user?.email?.[0]?.toUpperCase() ||
-                      "U"}
+            <aside className="space-y-6 xl:sticky xl:top-28 xl:self-start">
+              <div className="rounded-[2rem] border border-white/70 bg-white/78 p-6 shadow-[0_24px_60px_rgba(15,23,42,0.07)] backdrop-blur-xl">
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">Workspace Stats</p>
+                <h2 className="mt-2 text-2xl font-black text-slate-900">{greeting}</h2>
+                <div className="mt-6 grid gap-4">
+                  <div className="rounded-[1.4rem] border border-slate-100 bg-slate-50/80 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Current Module Attempts</p>
+                    <p className="mt-2 text-3xl font-black text-slate-900">{currentStats.total}</p>
+                  </div>
+                  <div className="rounded-[1.4rem] border border-slate-100 bg-slate-50/80 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Best Band</p>
+                    <p className="mt-2 text-3xl font-black text-slate-900">{formatScore(currentStats.best)}</p>
+                  </div>
+                  <div className="rounded-[1.4rem] border border-slate-100 bg-slate-50/80 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Visible Units</p>
+                    <p className="mt-2 text-3xl font-black text-slate-900">{filteredUnits.length}</p>
                   </div>
                 </div>
-                <h3 className="text-xl font-bold text-gray-900 mb-1">
-                  {session?.user?.name ||
-                    session?.user?.email?.split("@")[0] ||
-                    "User"}
-                </h3>
-
-                <div className="w-full h-px bg-gray-200/60 my-6"></div>
-
-                <div className="w-full flex justify-between px-2 mb-6">
-                  <div className="flex flex-col items-center">
-                    <span className="text-2xl font-black text-gray-900">
-                      {currentStats.count}
-                    </span>
-                    <span className="text-xs font-medium text-gray-500">
-                      累计考试
-                    </span>
-                  </div>
-                  <div className="w-px h-10 bg-gray-200/60"></div>
-                  <div className="flex flex-col items-center">
-                    <span className="text-2xl font-black text-gray-900">
-                      {currentStats.best}
-                    </span>
-                    <span className="text-xs font-medium text-gray-500">
-                      历史最高
-                    </span>
-                  </div>
-                </div>
-
-                <Link href="/dashboard/analytics" className="w-full">
-                  <Button
-                    variant="outline"
-                    className="w-full rounded-xl border-red-200 text-red-500 hover:bg-red-50 hover:text-red-600 font-bold transition-colors"
-                  >
-                    模考记录
-                  </Button>
-                </Link>
               </div>
 
-              <div className="bg-gray-900 rounded-3xl p-6 shadow-xl relative overflow-hidden group cursor-pointer transition-transform hover:-translate-y-1">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-yellow-400/20 to-transparent rounded-full blur-2xl"></div>
-                <h4 className="text-white font-black text-lg mb-2 z-10 relative">
-                  LinguoSovereign VIP
-                </h4>
-                <p className="text-gray-400 text-xs font-medium mb-6 z-10 relative">
-                  全库题源解析、口语答案畅听特权
+              <div className="rounded-[2rem] border border-slate-900 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800 p-6 text-white shadow-[0_24px_70px_rgba(15,23,42,0.3)]">
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-white/55">Review Loop</p>
+                <h3 className="mt-2 text-2xl font-black">做完一套，立即复盘</h3>
+                <p className="mt-3 text-sm leading-7 text-white/72">
+                  完成练习后，直接去数据面板或 Review 页面检查 Band、答案差异和最近一次提交记录。
                 </p>
-                <Button className="bg-[#D4B37F] hover:bg-[#c2a16d] text-gray-900 font-bold rounded-full h-9 px-6 text-xs z-10 relative">
-                  立即开通
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
- * StatCard Helper Component
- * Used in the sidebar/hero to show a count of available resources.
- */
-function StatCard({
-  title,
-  desc,
-  count,
-}: {
-  title: string;
-  desc: string;
-  count: number;
-}) {
-  return (
-    <div className="bg-white/50 hover:bg-white/80 backdrop-blur-md border border-white/60 shadow-[0_4px_15px_rgba(0,0,0,0.02)] transition-all duration-300 rounded-2xl p-6 flex justify-between items-center group">
-      <div className="flex flex-col gap-1">
-        <span className="text-gray-900 font-extrabold text-lg">{title}</span>
-        <span className="text-gray-500 text-xs font-semibold uppercase tracking-wider">
-          {desc}
-        </span>
-      </div>
-      {/* Dynamic gradient text for the numbers */}
-      <div className="text-4xl font-black text-gray-900 tracking-tighter group-hover:scale-105 transition-transform duration-300 bg-clip-text text-transparent bg-gradient-to-br from-gray-900 to-gray-500">
-        {count}
-      </div>
-    </div>
-  );
-}
-
-/**
- * TestGroupedView Helper Component
- * Renders a list of units grouped by 'Test' number (e.g., Test 1, Test 2).
- * Each row shows the short title, completion status, last score, and action buttons.
- */
-function TestGroupedView({
-  units,
-  icon,
-  history,
-}: {
-  units: any[];
-  icon: React.ReactNode;
-  history?: any[];
-}) {
-  if (!units || units.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 bg-white border border-gray-100 rounded-3xl shadow-sm">
-        <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-          {icon}
-        </div>
-        <p className="text-gray-500 font-semibold">该卷宗下暂无对应模块</p>
-      </div>
-    );
-  }
-
-  const grouped: Record<string, any[]> = {};
-
-  units.forEach((u) => {
-    let test = "General / Independent Task";
-    const testMatch = u.title.match(/(?:Test|T)[\s-]*(\d+)/i);
-    if (testMatch) test = `Test ${testMatch[1]}`;
-
-    if (!grouped[test]) grouped[test] = [];
-
-    const shortTitle =
-      formatIELTSTitle(u.title)
-        .replace(/Cambridge \d+ Test \d+ /i, "")
-        .trim() || formatIELTSTitle(u.title);
-    grouped[test].push({ ...u, shortTitle });
-  });
-
-  return (
-    <div className="flex flex-col gap-8">
-      {Object.keys(grouped)
-        .sort()
-        .map((test) => (
-          <div
-            key={test}
-            className="bg-white/60 backdrop-blur-2xl rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/60 overflow-hidden"
-          >
-            {/* Table Header Wrapper */}
-            <div className="bg-gray-50/80 px-6 py-4 flex items-center justify-between border-b border-gray-100">
-              <div className="flex items-center gap-3 w-1/4">
-                <div className="w-1.5 h-5 bg-gradient-to-b from-blue-500 to-indigo-600 rounded-full"></div>
-                <h3 className="text-lg font-black text-gray-900 tracking-tight">
-                  {test}
-                </h3>
-              </div>
-              <div className="flex-1 hidden md:flex items-center text-sm font-bold text-gray-400">
-                <div className="flex-1 text-center">场景</div>
-                <div className="flex-1 text-center">练习记录</div>
-                <div className="flex-1 text-center">上次练习</div>
-                <div className="flex-1 text-center">练习答题</div>
-              </div>
-            </div>
-
-            {/* Table Body (Rows) */}
-            <div className="flex flex-col">
-              {grouped[test].map((u, i) => {
-                // Infer unit stats from history
-                const unitHistory =
-                  history?.filter((h) => h.unitId === u.id) || [];
-                const sortedHistory = [...unitHistory].sort(
-                  (a, b) =>
-                    new Date(b.createdAt).getTime() -
-                    new Date(a.createdAt).getTime(),
-                );
-                const lastAttempt = sortedHistory[0];
-
-                const totalAttempts = unitHistory.length;
-                let scoreDisplay = "- -";
-                if (lastAttempt && lastAttempt.score) {
-                  // Round to nearest 0.5 for IELTS standard
-                  const rawScore = parseFloat(lastAttempt.score);
-                  const ieltsScore = (Math.round(rawScore * 2) / 2).toFixed(1);
-                  scoreDisplay = `Score: ${ieltsScore}`;
-                }
-
-                return (
-                  <div
-                    key={u.id}
-                    className={`flex flex-col md:flex-row items-start md:items-center px-6 py-5 hover:bg-blue-50/30 transition-colors ${i !== grouped[test].length - 1 ? "border-b border-gray-100" : ""}`}
-                  >
-                    <div className="w-full md:w-1/4 mb-4 md:mb-0">
-                      <span
-                        className="font-bold text-[15px] text-blue-600 truncate block cursor-pointer hover:underline"
-                        title={u.title}
-                      >
-                        {formatIELTSTitle(u.title)}
-                      </span>
-                    </div>
-
-                    <div className="flex-1 flex flex-col md:flex-row w-full items-center text-sm font-medium text-gray-600">
-                      <div className="flex-1 text-center w-full md:w-auto mb-2 md:mb-0 py-1">
-                        综合/学术
-                      </div>
-                      <div className="flex-1 text-center w-full md:w-auto mb-2 md:mb-0 py-1">
-                        {totalAttempts > 0 ? (
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <button className="text-gray-700 hover:text-blue-600 transition-colors font-medium">
-                                {scoreDisplay}{" "}
-                                <span className="text-xs text-gray-400 underline decoration-dashed">
-                                  ({totalAttempts}次)
-                                </span>
-                              </button>
-                            </DialogTrigger>
-                            <DialogContent className="sm:max-w-[425px]">
-                              <DialogHeader>
-                                <DialogTitle>练习记录详请</DialogTitle>
-                              </DialogHeader>
-                              <div className="mt-4 space-y-3">
-                                {sortedHistory.map(
-                                  (attempt: any, idx: number) => {
-                                    const rawScore = attempt.score
-                                      ? parseFloat(attempt.score)
-                                      : 0;
-                                    const ieltsScore = (
-                                      Math.round(rawScore * 2) / 2
-                                    ).toFixed(1);
-                                    return (
-                                      <div
-                                        key={attempt.id}
-                                        className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100"
-                                      >
-                                        <div>
-                                          <div className="text-sm font-semibold text-gray-800">
-                                            第 {sortedHistory.length - idx}{" "}
-                                            次练习
-                                          </div>
-                                          <div className="text-xs text-gray-500">
-                                            {new Date(
-                                              attempt.createdAt,
-                                            ).toLocaleString()}
-                                          </div>
-                                        </div>
-                                        <div className="flex items-center gap-4">
-                                          <span className="text-sm font-bold text-gray-700">
-                                            Score: {ieltsScore}
-                                          </span>
-                                          {/* Pass submission ID optionally to review instead of unit, or keep unit for standard flow */}
-                                          <Link
-                                            href={`/review/${u.id}?submissionId=${attempt.id}`}
-                                            className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold"
-                                          >
-                                            详解
-                                          </Link>
-                                        </div>
-                                      </div>
-                                    );
-                                  },
-                                )}
-                              </div>
-                            </DialogContent>
-                          </Dialog>
-                        ) : (
-                          <span className="text-gray-400">{scoreDisplay}</span>
-                        )}
-                      </div>
-                      <div className="flex-1 text-center w-full md:w-auto mb-2 md:mb-0 py-1">
-                        {lastAttempt
-                          ? `已答: ${new Date(lastAttempt.createdAt).toLocaleDateString()}`
-                          : "未作答"}
-                      </div>
-                      <div className="flex-1 flex justify-center items-center gap-4 w-full md:w-auto py-1">
-                        <Link
-                          href={`/eval/${u.id}`}
-                          className="flex items-center gap-1.5 text-blue-600 hover:text-blue-800 transition-colors group"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                          <span>{lastAttempt ? "继续作答" : "开始作答"}</span>
-                        </Link>
-                        <Link
-                          href={`/review/${u.id}`}
-                          className="flex items-center gap-1.5 text-indigo-600 hover:text-indigo-800 transition-colors group"
-                        >
-                          <ListIcon className="w-4 h-4" />
-                          <span>详解</span>
-                        </Link>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-    </div>
-  );
-}
-
-function FullTestGroupedView({ units }: { units: any[] }) {
-  if (!units || units.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 bg-white border border-gray-100 rounded-3xl shadow-sm">
-        <p className="text-gray-500 font-semibold">该卷宗下暂无试题数据</p>
-      </div>
-    );
-  }
-
-  const testGroups: Record<string, any[]> = {};
-  units.forEach((u) => {
-    let testName = "General / Unknown Test";
-    const testMatch = u.title.match(/(?:Test|T)[\s-]*(\d+)/i);
-    if (testMatch) testName = `Test ${testMatch[1]}`;
-    if (!testGroups[testName]) testGroups[testName] = [];
-    testGroups[testName].push(u);
-  });
-
-  return (
-    <div className="flex flex-col gap-8">
-      {Object.keys(testGroups)
-        .sort()
-        .map((testKey) => {
-          const testItems = testGroups[testKey];
-          // Get representative ID for starting the test flow.
-          // A real flow would redirect to an Eval entry point that queues them up.
-          // For now, we'll map them horizontally as large cards.
-
-          let listUnit = testItems.find(
-            (u) =>
-              u.category === "Reading/Listening" && u.title.includes("Part"),
-          );
-          let readUnit = testItems.find(
-            (u) =>
-              u.category === "Reading/Listening" && u.title.includes("Passage"),
-          );
-          let writUnit = testItems.find((u) => u.category === "Writing");
-          let speakUnit = testItems.find((u) => u.category === "Speaking");
-
-          // Build a full continuous test sequence omitting speaking
-          const orderWeight = (title: string, category: string) => {
-            if (category === "Reading/Listening" && title.includes("Part"))
-              return 1;
-            if (category === "Reading/Listening" && title.includes("Passage"))
-              return 2;
-            if (category === "Writing") return 3;
-            if (category === "Speaking") return 4;
-            return 5;
-          };
-
-          const flowSequence = testItems
-            .filter((u) => u.category !== "Speaking")
-            .sort((a, b) => {
-              const weightDiff =
-                orderWeight(a.title, a.category) -
-                orderWeight(b.title, b.category);
-              if (weightDiff !== 0) return weightDiff;
-              // Sub sort algebraically
-              return a.title.localeCompare(b.title);
-            })
-            .map((u) => u.id);
-
-          let flowHref = "";
-          if (flowSequence.length > 0) {
-            const firstId = flowSequence[0];
-            const allIds = flowSequence.join(",");
-            flowHref = `/eval/${firstId}?flow=${allIds}`;
-          }
-
-          return (
-            <div
-              key={testKey}
-              className="bg-white/60 backdrop-blur-2xl rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/60 p-8 flex flex-col"
-            >
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-2 h-6 bg-red-500 rounded-full"></div>
-                  <h3 className="text-2xl font-black text-gray-900 tracking-tight">
-                    {testKey}{" "}
-                    <span className="bg-purple-600 text-white text-xs px-2 py-0.5 rounded ml-2 align-middle">
-                      NEW
-                    </span>
-                  </h3>
-                </div>
-                {listUnit && flowHref && (
-                  <Link href={flowHref}>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="rounded-full font-bold text-blue-600 border-blue-200 hover:bg-blue-50"
-                    >
-                      模拟考试
+                <div className="mt-6 flex flex-col gap-3">
+                  <Link href="/dashboard/analytics">
+                    <Button className="w-full rounded-full bg-white text-slate-900 hover:bg-white/90">
+                      <BrainCircuit className="mr-2 h-4 w-4" /> 查看数据面板
                     </Button>
                   </Link>
-                )}
+                  <Link href="/profile">
+                    <Button variant="outline" className="w-full rounded-full border-white/20 bg-white/5 text-white hover:bg-white/10 hover:text-white">
+                      <Settings className="mr-2 h-4 w-4" /> 管理个人资料
+                    </Button>
+                  </Link>
+                </div>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                {/* Listening Card */}
-                {listUnit ? (
-                  <Link href={`/eval/${listUnit.id}`}>
-                    <div className="bg-red-50/50 hover:bg-red-50 border border-red-100 rounded-2xl p-6 flex flex-col items-center justify-center text-center h-40 transition-all cursor-pointer group">
-                      <Headphones className="w-8 h-8 text-red-300 mb-3 group-hover:text-red-500 transition-colors" />
-                      <span className="font-bold text-gray-800 mb-2">
-                        Listening
-                      </span>
-                      <Button
-                        size="sm"
-                        className="bg-red-500 hover:bg-red-600 text-white rounded-full px-6 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-4"
-                      >
-                        开始考试
-                      </Button>
-                    </div>
-                  </Link>
-                ) : (
-                  <div className="bg-gray-50 border border-gray-100 rounded-2xl p-6 flex flex-col items-center justify-center text-center h-40 opacity-50">
-                    <Headphones className="w-8 h-8 text-gray-300 mb-3" />
-                    <span className="font-bold text-gray-400 mb-2">
-                      Listening
-                    </span>
-                  </div>
-                )}
-
-                {/* Reading Card */}
-                {readUnit ? (
-                  <Link href={`/eval/${readUnit.id}`}>
-                    <div className="bg-red-50/50 hover:bg-red-50 border border-red-100 rounded-2xl p-6 flex flex-col items-center justify-center text-center h-40 transition-all cursor-pointer group relative">
-                      <BookOpen className="w-8 h-8 text-red-300 mb-3 group-hover:text-red-500 transition-colors" />
-                      <span className="font-bold text-gray-800 mb-2">
-                        Reading
-                      </span>
-                      <Button
-                        size="sm"
-                        className="bg-red-500 hover:bg-red-600 text-white rounded-full px-6 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-4"
-                      >
-                        开始考试
-                      </Button>
-                    </div>
-                  </Link>
-                ) : (
-                  <div className="bg-gray-50 border border-gray-100 rounded-2xl p-6 flex flex-col items-center justify-center text-center h-40 opacity-50">
-                    <BookOpen className="w-8 h-8 text-gray-300 mb-3" />
-                    <span className="font-bold text-gray-400 mb-2">
-                      Reading
-                    </span>
-                  </div>
-                )}
-
-                {/* Writing Card */}
-                {writUnit ? (
-                  <Link href={`/eval/${writUnit.id}`}>
-                    <div className="bg-red-50/50 hover:bg-red-50 border border-red-100 rounded-2xl p-6 flex flex-col items-center justify-center text-center h-40 transition-all cursor-pointer group relative">
-                      <Edit3 className="w-8 h-8 text-red-300 mb-3 group-hover:text-red-500 transition-colors" />
-                      <span className="font-bold text-gray-800 mb-2">
-                        Writing
-                      </span>
-                      <Button
-                        size="sm"
-                        className="bg-red-500 hover:bg-red-600 text-white rounded-full px-6 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-4"
-                      >
-                        开始考试
-                      </Button>
-                    </div>
-                  </Link>
-                ) : (
-                  <div className="bg-gray-50 border border-gray-100 rounded-2xl p-6 flex flex-col items-center justify-center text-center h-40 opacity-50">
-                    <Edit3 className="w-8 h-8 text-gray-300 mb-3" />
-                    <span className="font-bold text-gray-400 mb-2">
-                      Writing
-                    </span>
-                  </div>
-                )}
-
-                {/* Speaking Card (Special Styling) */}
-                {speakUnit ? (
-                  <Link href={`/eval/${speakUnit.id}`}>
-                    <div className="bg-gradient-to-br from-indigo-50 to-blue-100 hover:from-indigo-100 hover:to-blue-200 border border-blue-200 rounded-2xl p-6 flex flex-col items-center justify-center text-center h-40 transition-all cursor-pointer">
-                      <span className="font-black text-indigo-900 text-xl mb-1 mt-2">
-                        Speaking
-                      </span>
-                      <span className="text-xs text-indigo-600 font-medium mb-3">
-                        专业1v1口语机考
-                      </span>
-                      <Button
-                        size="sm"
-                        className="bg-[#3800B0] hover:bg-[#2A0088] text-white rounded-full px-6 w-full"
-                      >
-                        立即测试
-                      </Button>
-                    </div>
-                  </Link>
-                ) : (
-                  <div className="bg-gray-50 border border-gray-100 rounded-2xl p-6 flex flex-col items-center justify-center text-center h-40 opacity-50">
-                    <Mic className="w-8 h-8 text-gray-300 mb-3" />
-                    <span className="font-bold text-gray-400 mb-2">
-                      Speaking
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
+            </aside>
+          </section>
+        )}
+      </main>
     </div>
   );
 }

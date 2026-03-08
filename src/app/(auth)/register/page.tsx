@@ -1,148 +1,139 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { KeyRound, Mail, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-/**
- * RegisterPage Component
- * A client-side component for creating new user accounts.
- * Interfaces with the `/api/register` backend route.
- */
 export default function RegisterPage() {
   const router = useRouter();
-
-  // --- Form State ---
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState(""); // Captures validation errors or server-side "User exists" messages
-  const [loading, setLoading] = useState(false); // Manages registration submission state
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  /**
-   * handleSubmit
-   * Processes the account creation request.
-   * 1. Validates input consistency.
-   * 2. POSTs data to /api/register.
-   * 3. On success, redirects user to login page with a success flag.
-   */
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     setLoading(true);
     setError("");
 
     try {
-      // Send user data payload to registration API
-      const res = await fetch("/api/register", {
+      const response = await fetch("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, password }),
       });
+      const data = (await response.json()) as { error?: string };
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        // Handled server-side errors (e.g., duplicated email)
+      if (!response.ok) {
         setError(data.error || "注册失败");
         setLoading(false);
-      } else {
-        // Success: Redirect to login with query param to trigger success notification
-        router.push("/login?registered=true");
+        return;
       }
-    } catch (e) {
-      // General network/endpoint failure
-      setError("网络错误，请稍后重试");
+
+      router.push("/login?registered=true");
+    } catch (error) {
+      console.error(error);
+      setError("网络错误，请稍后重试。");
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#f2f4f8] to-[#e8eaf6] flex items-center justify-center p-6 relative overflow-hidden font-sans">
-      <div className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%] bg-purple-300/30 rounded-full blur-[120px] pointer-events-none -z-10"></div>
-      <div className="absolute bottom-[-10%] left-[-10%] w-[60%] h-[60%] bg-blue-300/20 rounded-full blur-[150px] pointer-events-none -z-10"></div>
-
-      <div className="w-full max-w-md bg-white/60 backdrop-blur-2xl rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.05)] border border-white/60 p-10 relative">
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 bg-gray-900 rounded-2xl flex items-center justify-center text-white font-bold text-2xl shadow-sm mb-4">
-            LS
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#edf2f7] px-6 py-12 text-slate-900">
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top_right,_rgba(56,189,248,0.18),_transparent_32%),radial-gradient(circle_at_10%_80%,_rgba(16,185,129,0.18),_transparent_28%),linear-gradient(180deg,#f8fafc_0%,#eef2f7_100%)]" />
+      <div className="grid w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/70 bg-white/78 shadow-[0_30px_80px_rgba(15,23,42,0.1)] backdrop-blur-2xl lg:grid-cols-[1fr_460px]">
+        <div className="hidden border-r border-white/70 bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 p-10 text-white lg:block">
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-white/55">Candidate Onboarding</p>
+          <h1 className="mt-5 text-5xl font-black leading-tight">创建账户，然后把训练、评分和复盘放进同一条路径。</h1>
+          <div className="mt-10 space-y-4 text-sm leading-7 text-white/72">
+            <div className="rounded-[1.4rem] border border-white/10 bg-white/5 p-4">
+              账号创建后即可使用阅读、听力、写作、口语四大模块。
+            </div>
+            <div className="rounded-[1.4rem] border border-white/10 bg-white/5 p-4">
+              历史成绩与模考记录会绑定到你的账户，方便连续复盘。
+            </div>
+            <div className="rounded-[1.4rem] border border-white/10 bg-white/5 p-4">
+              注册完成会自动跳到登录页，并带上成功提示。
+            </div>
           </div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">
-            欢迎加入
-          </h1>
-          <p className="text-sm font-medium text-gray-500 mt-2">
-            创建您的 LinguoSovereign 账户
-          </p>
         </div>
 
-        {error && (
-          <div className="bg-red-50 text-red-600 text-sm font-semibold p-3 rounded-xl mb-6 text-center border border-red-100">
-            {error}
+        <div className="p-8 sm:p-10 lg:p-12">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-lg font-black text-white shadow-lg shadow-slate-900/15">
+              LS
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">Create Account</p>
+              <h2 className="text-lg font-black text-slate-900">加入 LinguoSovereign</h2>
+            </div>
           </div>
-        )}
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-bold text-gray-600 uppercase tracking-widest">
-              姓名 / 昵称
+          {error && (
+            <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+            <label className="block space-y-2">
+              <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+                <User className="h-4 w-4" /> 昵称
+              </span>
+              <input
+                type="text"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                required
+                placeholder="Candidate"
+                className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 font-medium text-slate-900 outline-none transition-all focus:border-sky-400 focus:ring-4 focus:ring-sky-400/15"
+              />
             </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="h-14 px-4 rounded-2xl bg-white/50 border border-white/60 focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 outline-none transition-all text-gray-900 font-medium"
-              placeholder="Candidate"
-            />
-          </div>
 
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-bold text-gray-600 uppercase tracking-widest">
-              邮箱地址
+            <label className="block space-y-2">
+              <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+                <Mail className="h-4 w-4" /> 邮箱地址
+              </span>
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                required
+                placeholder="you@example.com"
+                className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 font-medium text-slate-900 outline-none transition-all focus:border-sky-400 focus:ring-4 focus:ring-sky-400/15"
+              />
             </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="h-14 px-4 rounded-2xl bg-white/50 border border-white/60 focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 outline-none transition-all text-gray-900 font-medium"
-              placeholder="you@example.com"
-            />
-          </div>
 
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-bold text-gray-600 uppercase tracking-widest">
-              密码
+            <label className="block space-y-2">
+              <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+                <KeyRound className="h-4 w-4" /> 密码
+              </span>
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+                minLength={6}
+                placeholder="至少 6 位"
+                className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 font-medium text-slate-900 outline-none transition-all focus:border-sky-400 focus:ring-4 focus:ring-sky-400/15"
+              />
             </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              minLength={6}
-              className="h-14 px-4 rounded-2xl bg-white/50 border border-white/60 focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 outline-none transition-all text-gray-900 font-medium"
-              placeholder="••••••••"
-            />
-          </div>
 
-          <Button
-            type="submit"
-            disabled={loading}
-            className="h-14 mt-4 rounded-2xl bg-gray-900 hover:bg-gray-800 text-white font-bold text-lg shadow-xl shadow-gray-900/10 transition-all"
-          >
-            {loading ? "注册中..." : "立即注册"}
-          </Button>
-        </form>
+            <Button type="submit" disabled={loading} className="h-14 w-full rounded-2xl bg-slate-900 text-base font-bold text-white hover:bg-slate-800">
+              {loading ? "注册中..." : "创建账户"}
+            </Button>
+          </form>
 
-        <p className="text-center text-sm font-medium text-gray-500 mt-8">
-          已有账号？{" "}
-          <Link
-            href="/login"
-            className="text-blue-600 font-bold hover:underline"
-          >
-            直接登录
-          </Link>
-        </p>
+          <p className="mt-8 text-sm font-medium text-slate-500">
+            已有账号？
+            <Link href="/login" className="ml-2 font-bold text-sky-600 hover:text-sky-700">
+              返回登录
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   );

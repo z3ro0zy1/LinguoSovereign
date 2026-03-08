@@ -2,26 +2,22 @@ import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import EvalWrapper from "@/components/eval/EvalWrapper";
 
-/**
- * EvalPage - Server Component
- * The entry point for taking a test.
- * It handles the loading of a single QuestionUnit and its siblings (Passage 1, 2, 3 OR Task 1, 2).
- */
+type EvalUnitSummary = {
+  id: string;
+  title: string;
+};
+
 export default async function EvalPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ flow?: string }>; // Optional comma-separated IDs for batch testing
+  searchParams: Promise<{ flow?: string }>;
 }) {
   const resolvedParams = await params;
   const resolvedSearch = await searchParams;
+  const flowSequence = resolvedSearch.flow !== undefined ? resolvedSearch.flow : undefined;
 
-  // flowSequence is used for "Full Test" modes where multiple parts are queued
-  const flowSequence =
-    resolvedSearch.flow !== undefined ? resolvedSearch.flow : undefined;
-
-  // Load the current specific question unit
   const unit = await prisma.questionUnit.findUnique({
     where: { id: resolvedParams.id },
     include: {
@@ -35,18 +31,13 @@ export default async function EvalPage({
     return notFound();
   }
 
-  /**
-   * --- SIBLING DETECTION ---
-   * Automatically find other parts of the same Cambridge test (e.g. C17-T1).
-   * This allows the user to switch between passages/tasks easily.
-   */
   let testPrefix = "";
   const match = unit.title.match(/(剑\d+\s*Test\s*\d+|C\d+-T\d+)/i);
   if (match) {
     testPrefix = match[1];
   }
 
-  let siblings: any[] = [];
+  let siblings: EvalUnitSummary[] = [];
   if (testPrefix) {
     let subTypeFilter = "";
     if (unit.category === "Reading/Listening") {
@@ -56,7 +47,9 @@ export default async function EvalPage({
       subTypeFilter = "Task";
     }
 
-    const queryConditions: any[] = [{ title: { contains: testPrefix } }];
+    const queryConditions: Array<{ title: { contains: string } }> = [
+      { title: { contains: testPrefix } },
+    ];
     if (subTypeFilter) {
       queryConditions.push({ title: { contains: subTypeFilter } });
     }
@@ -76,28 +69,16 @@ export default async function EvalPage({
     });
   }
 
-  // Serialize Prisma objects to plain POJOs for Client Component compatibility
-  const unitData = JSON.parse(JSON.stringify(unit));
-  const siblingsData = JSON.parse(JSON.stringify(siblings));
-
-  /**
-   * Determine the total IDs in the current session.
-   * If 'flow' query param is present, it defines the test set.
-   * Otherwise, we default to the detected siblings (e.g. all 3 passages of C17-T1).
-   */
+  const unitData = JSON.parse(JSON.stringify(unit)) as typeof unit;
+  const siblingsData = JSON.parse(JSON.stringify(siblings)) as EvalUnitSummary[];
   const allFlowIds = flowSequence
     ? flowSequence.split(",")
-    : siblingsData.map((s: any) => s.id);
+    : siblingsData.map((sibling) => sibling.id);
 
-  // Ensure the current ID is always at least one of the IDs
   if (allFlowIds.length === 0) allFlowIds.push(unitData.id);
 
   return (
-    <div className="container mx-auto p-4 w-full max-w-[1600px] mb-24">
-      {/* 
-          EvalWrapper is the main orchestrator for the test UI.
-          It handles timer, audio, input capture, and submission.
-      */}
+    <div className="container mx-auto mb-24 w-full max-w-[1600px] p-4">
       <EvalWrapper
         unit={unitData}
         siblings={siblingsData}

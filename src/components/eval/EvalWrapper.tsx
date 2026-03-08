@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import ObjectiveRenderer from "./ObjectiveRenderer";
 import SubjectiveRenderer from "./SubjectiveRenderer";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ListIcon, ArrowRightIcon } from "lucide-react";
+import { ArrowRightIcon } from "lucide-react";
 import { formatIELTSTitle } from "@/lib/utils";
 
 /**
@@ -25,8 +25,14 @@ export default function EvalWrapper({
   flowSequence,
   allFlowIds = [],
 }: {
-  unit: any;
-  siblings?: any[];
+  unit: {
+    id: string;
+    title: string;
+    category: string;
+    audioUrl?: string | null;
+    questions: Array<{ id: string; stem?: string }>;
+  };
+  siblings?: Array<{ id: string; title: string }>;
   flowSequence?: string;
   allFlowIds?: string[];
 }) {
@@ -38,29 +44,25 @@ export default function EvalWrapper({
    * If this state is populated, the child components (ObjectiveRenderer or SubjectiveRenderer)
    * will switch their UI to show correct answers and explanations instead of input fields.
    */
-  const [submissionResult, setSubmissionResult] = useState<any>(null);
+  const [submissionResult, setSubmissionResult] = useState<Record<string, unknown> | null>(() => {
+    if (typeof window === "undefined") return null;
 
-  // Hydrate submissionResult from localStorage on mount.
-  // This allows users to refresh the page after submitting without losing their results view.
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const savedRes = localStorage.getItem(`linguo_result_${unit.id}`);
-      if (savedRes) {
-        try {
-          setSubmissionResult(JSON.parse(savedRes));
-        } catch (e) {}
-      } else {
-        setSubmissionResult(null);
-      }
+    const savedRes = localStorage.getItem(`linguo_result_${unit.id}`);
+    if (!savedRes) return null;
+
+    try {
+      return JSON.parse(savedRes);
+    } catch {
+      return null;
     }
-  }, [unit.id]);
+  });
 
   /**
    * handleGlobalResult
    * Callback fired by child renderers when a test is successfully submitted.
    * Persistence happens in localStorage for current session robustness.
    */
-  const handleGlobalResult = (res: any, specificUnitId?: string) => {
+  const handleGlobalResult = (res: Record<string, unknown>, specificUnitId?: string) => {
     const targetId = specificUnitId || unit.id;
     if (typeof window !== "undefined") {
       localStorage.setItem(`linguo_result_${targetId}`, JSON.stringify(res));
@@ -77,6 +79,12 @@ export default function EvalWrapper({
   const currentIndex = allFlowIds.indexOf(unit.id);
   const isLastPart =
     currentIndex === -1 || currentIndex === allFlowIds.length - 1;
+  const nextFlowIds =
+    currentIndex >= 0 ? allFlowIds.slice(currentIndex + 1) : allFlowIds.slice(1);
+  const nextHref =
+    nextFlowIds.length > 0
+      ? `/eval/${nextFlowIds[0]}?flow=${nextFlowIds.join(",")}`
+      : "/dashboard/analytics";
 
   return (
     <div className="flex flex-col gap-6">
@@ -89,15 +97,6 @@ export default function EvalWrapper({
           Back to Dashboard
         </Button>
       </header>
-
-      {/* Audio Player: Only visible if the unit has an audio URL (Listening tests) */}
-      {unit.audioUrl && (
-        <div className="bg-gray-50 p-4 rounded-lg flex items-center justify-center">
-          <audio controls src={`/${unit.audioUrl}`} className="w-full max-w-md">
-            Your browser does not support the audio element.
-          </audio>
-        </div>
-      )}
 
       {/**
        * --- ROUTING TO SPECIALIZED RENDERERS ---
@@ -177,12 +176,10 @@ export default function EvalWrapper({
             {submissionResult && (
               <div className="flex items-center ml-auto pl-4 border-l border-gray-300">
                 {flowSequence ? (
-                  <Link
-                    href={`/eval/${flowSequence.split(",")[0]}?flow=${flowSequence.split(",").slice(1).join(",")}`}
-                  >
+                  <Link href={nextHref}>
                     <Button className="bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md h-10 px-6">
-                      继续进入下一模块 ({flowSequence.split(",").length}{" "}
-                      pending) <ArrowRightIcon className="ml-2 w-4 h-4" />
+                      继续进入下一模块 ({nextFlowIds.length} pending){" "}
+                      <ArrowRightIcon className="ml-2 w-4 h-4" />
                     </Button>
                   </Link>
                 ) : (
