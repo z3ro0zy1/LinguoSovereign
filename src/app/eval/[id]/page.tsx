@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
-import { notFound } from "next/navigation";
+import { authOptions } from "@/lib/auth";
+import { getServerSession } from "next-auth";
+import { notFound, redirect } from "next/navigation";
 import EvalWrapper from "@/components/eval/EvalWrapper";
 
 type EvalUnitSummary = {
@@ -12,11 +14,12 @@ export default async function EvalPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ flow?: string }>;
+  searchParams: Promise<{ flow?: string; mode?: string }>;
 }) {
   const resolvedParams = await params;
   const resolvedSearch = await searchParams;
   const flowSequence = resolvedSearch.flow !== undefined ? resolvedSearch.flow : undefined;
+  const subjectiveMode = resolvedSearch.mode === "ai" ? "ai" : "standard";
 
   const unit = await prisma.questionUnit.findUnique({
     where: { id: resolvedParams.id },
@@ -29,6 +32,15 @@ export default async function EvalPage({
 
   if (!unit) {
     return notFound();
+  }
+
+  const requiresAuth = unit.category === "Writing" || unit.category === "Speaking";
+  if (requiresAuth) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      const callbackUrl = `/eval/${resolvedParams.id}${resolvedSearch.mode === "ai" ? "?mode=ai" : ""}`;
+      redirect(`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`);
+    }
   }
 
   let testPrefix = "";
@@ -71,9 +83,12 @@ export default async function EvalPage({
 
   const unitData = JSON.parse(JSON.stringify(unit)) as typeof unit;
   const siblingsData = JSON.parse(JSON.stringify(siblings)) as EvalUnitSummary[];
-  const allFlowIds = flowSequence
-    ? flowSequence.split(",")
-    : siblingsData.map((sibling) => sibling.id);
+  const shouldSubmitIndividually = !flowSequence && (unit.category === "Writing" || unit.category === "Speaking");
+  const allFlowIds = shouldSubmitIndividually
+    ? [unitData.id]
+    : flowSequence
+      ? flowSequence.split(",")
+      : siblingsData.map((sibling) => sibling.id);
 
   if (allFlowIds.length === 0) allFlowIds.push(unitData.id);
 
@@ -84,6 +99,7 @@ export default async function EvalPage({
         siblings={siblingsData}
         flowSequence={flowSequence}
         allFlowIds={allFlowIds}
+        subjectiveMode={subjectiveMode}
       />
     </div>
   );

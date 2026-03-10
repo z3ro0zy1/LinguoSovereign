@@ -1,260 +1,356 @@
-# LinguoSovereign — AI Agent 快速上下文文档
+# LinguoSovereign — Agent Context
 
-> 本文档专为 AI Agent 编写，节省 token。**先读此文件，再读源码。**
-> 最后更新：2026-03-07
+Last updated: 2026-03-09
 
----
+This file is the AI-agent-facing source of truth for this repository.
+Read this before making code changes.
 
-## 1. 项目一句话
+## 1. Project Identity
 
-**LinguoSovereign（语言主权）** 是基于 Next.js 15 App Router 的 IELTS 全科备考平台，集成了 OpenAI GPT-4o 评分、Web Speech API 录音、PostgreSQL 题库（3000+ 条）。
+LinguoSovereign is a Next.js 16 IELTS practice system with:
 
----
+- objective modules: Reading / Listening
+- subjective modules: Writing / Speaking
+- attempt persistence
+- review pages
+- analytics
+- auth-gated AI evaluation for subjective tasks
 
-## 2. 关键技术决策（避免踩坑）
+## 2. Ground Truth Stack
 
-| 决策     | 结论                                                                                                                                   |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------- | ----------------------------------------- |
-| 框架     | Next.js 15 + Turbopack，**用 App Router，不用 Pages Router**                                                                           |
-| ORM      | Prisma 7（`prisma.config.ts` 在根目录，不是 `prisma/schema.prisma` 里的 datasource url）                                               |
-| 认证     | NextAuth.js Credentials（邮箱+密码 bcrypt），**session 用 JWT 策略**                                                                   |
-| 样式     | Tailwind CSS v4 + shadcn/ui（components.json 已配置）                                                                                  |
-| DB存储   | 题目答案 `answer`、选项 `options`、解析 `officialAnalysis` 全部是 **Prisma `Json?` 类型**，实际值可能是 `string                        | string[] | {label, value} | null`，**绝对不能直接渲染为 React child** |
-| 分类值   | `QuestionUnit.category` 的实际值是 `"Reading/Listening"`（两者合一）、`"Writing"`、`"Speaking"`，**不是** `"Reading"` 或 `"Listening"` |
-| 音频 URL | DB 里存绝对路径，渲染时用 `/audios/${unit.audioUrl.split("/").pop()}` 取文件名                                                         |
-| 试题区分 | 阅读 = `category === "Reading/Listening" && title.includes("Passage")`；听力 = 包含 `"Part"`                                           |
+- Next.js 16 App Router
+- React 19
+- TypeScript
+- Tailwind v4
+- NextAuth v4 Credentials + JWT sessions
+- Prisma 7 with `@prisma/adapter-pg`
+- PostgreSQL
+- `openai` SDK for OpenAI-compatible model providers
 
----
+Do not describe this repo as Next.js 15 or GPT-4o-only. Both are outdated.
 
-## 3. 目录结构（只列关键文件）
+## 3. High-Value Files
 
+### Root
+
+- `README.md`
+- `AGENT_CONTEXT.md`
+- `package.json`
+- `prisma/schema.prisma`
+- `.env.example`
+
+### App routes
+
+- `src/app/page.tsx`
+- `src/app/eval/[id]/page.tsx`
+- `src/app/review/[id]/page.tsx`
+- `src/app/dashboard/analytics/page.tsx`
+- `src/app/(auth)/login/page.tsx`
+- `src/app/(auth)/register/page.tsx`
+- `src/app/profile/page.tsx`
+- `src/app/profile/ProfileClient.tsx`
+
+### API routes
+
+- `src/app/api/auth/[...nextauth]/route.ts`
+- `src/app/api/eval/objective/route.ts`
+- `src/app/api/eval/subjective/route.ts`
+- `src/app/api/speaking/live/route.ts`
+- `src/app/api/analytics/route.ts`
+- `src/app/api/register/route.ts`
+- `src/app/api/upload/route.ts`
+- `src/app/api/units/route.ts`
+- `src/app/api/units/[id]/route.ts`
+- `src/app/api/profile/route.ts`
+- `src/app/api/prompts/route.ts`
+
+### Components
+
+- `src/components/DashboardClient.tsx`
+- `src/components/eval/EvalWrapper.tsx`
+- `src/components/eval/ObjectiveRenderer.tsx`
+- `src/components/eval/SubjectiveRenderer.tsx`
+- `src/components/eval/SpeakingAiRenderer.tsx`
+- `src/app/review/[id]/ReviewClient.tsx`
+- `src/app/review/[id]/review-utils.tsx`
+- `src/components/eval/objective/shared.tsx`
+
+### Core libs
+
+- `src/lib/auth.ts`
+- `src/lib/ai.ts`
+- `src/lib/prisma.ts`
+- `src/lib/testSession.ts`
+- `src/lib/utils.ts`
+
+## 4. Current Product Semantics
+
+### Auth rules
+
+- Reading / Listening: can be opened anonymously
+- Writing / Speaking: require auth before entering `/eval/[id]`
+- Subjective APIs require auth
+- `/api/speaking/live` requires auth
+
+### Review rules
+
+- `/review/[id]` = pure reference page
+- `/review/[id]?submissionId=...` = one historical attempt
+- Do not silently auto-load latest submission in the no-query review route
+
+### Dashboard rules
+
+- `Attempt History` links should carry `submissionId`
+- standalone `详解` button should not carry `submissionId`
+
+## 5. Data Model Facts
+
+### `QuestionUnit`
+
+Fields that matter most in code:
+
+- `id: string`
+- `sourceId: string`
+- `title: string`
+- `audioUrl: string | null`
+- `category: string`
+- `passage: Json`
+
+### `Question`
+
+- `serialNumber: number`
+- `type: string`
+- `stem: string`
+- `options: Json?`
+- `answer: Json?`
+- `officialAnalysis: Json?`
+
+### `Submission`
+
+- `answers: Json`
+  - current shape usually: `{ userAnswers, timeSpent }`
+- `aiScore: Json?`
+- `aiFeedback: string?`
+
+## 6. Category Invariants
+
+Database categories are not split as raw `Reading` and `Listening` in `QuestionUnit.category`.
+The actual values are:
+
+- `Reading/Listening`
+- `Writing`
+- `Speaking`
+
+Reading vs Listening is derived from title:
+
+- Reading if title contains `Passage`
+- Listening if title contains `Part`
+
+This inference exists in multiple places. Keep it consistent.
+
+## 7. Current AI Layer
+
+Defined in `src/lib/ai.ts`.
+
+Environment variables:
+
+- `OPENAI_API_KEY`
+- `OPENAI_BASE_URL`
+- `OPENAI_MODEL`
+- `OPENAI_SPEAKING_MODEL`
+
+Reality:
+
+- the code uses the OpenAI SDK
+- providers may be OpenAI-compatible third parties, including Moonshot / Kimi
+- `getSubjectiveEvalModel()` is used for Writing / Speaking evaluation
+- `getSpeakingConversationModel()` is used for speaking conversation mode
+
+Do not hardcode provider-specific assumptions into UI copy unless requested.
+
+## 8. Speaking Architecture
+
+There are two speaking modes.
+
+### Standard speaking practice
+
+Implemented in `SubjectiveRenderer.tsx`.
+
+Current stack:
+
+- browser `SpeechRecognition` / `webkitSpeechRecognition`
+- transcription into textarea-like answer state
+- can also be typed manually
+
+### AI speaking mode
+
+Implemented in `SpeakingAiRenderer.tsx` + `/api/speaking/live`.
+
+Current stack:
+
+- browser speech recognition for input
+- server-side text model call for examiner reply
+- browser speech synthesis for playback
+
+Important:
+
+- this is not true full-duplex realtime voice
+- it is a turn-based voice loop
+- if docs mention WebRTC or realtime voice, they must be clearly marked as future work unless implemented
+
+## 9. Objective Flow Facts
+
+`src/app/api/eval/objective/route.ts`:
+
+- saves submissions even when user is anonymous
+- objective scoring is algorithmic
+- `aiScore` for objective submissions stores metadata like:
+  - `totalCorrect`
+  - `totalObjective`
+  - `scoreRatio`
+  - `timeSpent`
+
+`ReviewClient.tsx` uses these results to render correctness and explanation UI.
+
+## 10. Subjective Flow Facts
+
+`src/app/api/eval/subjective/route.ts`:
+
+- requires auth
+- supports two modes:
+  - save only: `useAi = false`
+  - AI evaluate: `useAi = true`
+- AI output contract expects JSON with:
+  - `totalScore`
+  - `dimensions: { TR, CC, LR, GRA }`
+  - `summary`
+
+Current persistence detail:
+
+- `aiScore` currently stores `aiParsed.dimensions` only
+- `aiFeedback` stores `summary` or fallback text
+- review pages derive total band by averaging dimensions if needed
+
+If you refactor this, keep analytics and review compatibility in mind.
+
+## 11. Review Rendering Facts
+
+### Images
+
+- image-heavy stems should use shared parse options
+- `imageFixingOptions` lives in `src/components/eval/objective/shared.tsx`
+- static asset normalization is centralized in `resolveStaticAssetUrl()` in `src/lib/utils.ts`
+
+### AI markdown
+
+- subjective review uses `parseRichAnswer()` from `src/app/review/[id]/review-utils.tsx`
+- this now renders headings, lists, and bold text instead of raw markdown dumps
+
+### User context section
+
+- should show only the actual user response
+- should not dump the full `submission.answers` object raw
+- `timeSpent` and internal keys should stay out of the UI unless explicitly requested
+
+### Reference answer box
+
+- the reference area should still render even if `q.answer` is missing
+- current placeholder is intentional until content is filled later
+
+## 12. Listening Timestamp Status
+
+No transcript timestamps currently exist.
+
+Evidence:
+
+- Prisma schema has no timestamp fields for transcript segments
+- seeded `passage` is just JSON content without timing metadata
+- current listening transcript rendering treats `passage` as plain text blocks
+
+Therefore:
+
+- audio-synced transcript highlighting is not possible yet without new data
+- the hard problem is data preparation, not the highlight UI itself
+
+## 13. Auth Details
+
+`src/lib/auth.ts` uses:
+
+- Credentials provider
+- bcrypt password comparison
+- JWT session strategy
+- session callback exposes `user.id`
+
+Login page details:
+
+- `/login` accepts `callbackUrl`
+- after successful sign-in it redirects back via `router.replace(callbackUrl)`
+
+## 14. Local Persistence
+
+`src/lib/testSession.ts` manages local draft state through `localStorage`.
+
+Used for:
+
+- answer persistence
+- draft restoration
+- per-unit state
+
+Keys include:
+
+- `linguo_ans_[unitId]`
+- `linguo_req_[unitId]`
+- `linguo_cat_[unitId]`
+- `linguo_time_[unitId]`
+
+## 15. Known Current Limitations
+
+- no listening transcript timestamps
+- no full realtime voice stack
+- speaking standard mode still depends on browser speech APIs
+- reference answers are incomplete for some subjective tasks
+- `DashboardClient.tsx` remains large and should still be treated carefully
+
+## 16. Common Failure Modes
+
+### NextAuth JWT decryption error
+
+Usually caused by stale cookies after changing `NEXTAUTH_SECRET`.
+Fix by clearing site data for `localhost:3000`.
+
+### Subjective AI request appears to do nothing
+
+Historically caused by UI overlap and by task-batch submission assumptions.
+Current intended behavior:
+
+- standalone Writing / Speaking entry submits the current unit only
+- full flow submission still uses the explicit `flow` sequence when present
+
+### Review image not loading
+
+Usually caused by raw image path rendering instead of `resolveStaticAssetUrl()`.
+
+## 17. Safe Editing Guidelines
+
+When changing this repo, prefer these rules:
+
+- do not infer behavior from old docs
+- verify route semantics in code first
+- keep auth checks aligned between page and API
+- treat `Json` fields as untrusted shape
+- do not render raw Prisma JSON directly into React
+- preserve the distinction between:
+  - pure reference review
+  - historical attempt review
+
+## 18. Quick Commands
+
+```bash
+npm run dev
+npm run lint
+npm run build
+npx tsx scripts/seed.ts
+npx tsx scripts/verify_audio_files.ts
+npx tsx scripts/debug_analytics_categories.ts
 ```
-/
-├── AGENT_CONTEXT.md          ← 本文件（AI 优先读）
-├── this_task.md              ← 功能任务清单（Phase 1-5 全部 ✅）
-├── this_walkthrough.md       ← 功能说明文档
-├── docs/SystemArchitecture.md ← 详细架构说明
-├── prisma/schema.prisma      ← 数据库模型
-├── prisma.config.ts          ← Prisma 客户端配置（根目录）
-├── .env                      ← DATABASE_URL, NEXTAUTH_SECRET, OPENAI_API_KEY
-│
-├── src/app/
-│   ├── page.tsx              → fetch allUnits → <DashboardClient>（首页）
-│   ├── layout.tsx            → AuthProvider（SessionProvider）
-│   ├── (auth)/login/         → 登录 UI
-│   ├── (auth)/register/      → 注册 UI
-│   ├── eval/[id]/page.tsx    → 答题页（Server → <EvalWrapper>）
-│   ├── review/[id]/
-│   │   ├── page.tsx          → Server Component：查询 unit+submission → <ReviewClient>
-│   │   └── ReviewClient.tsx  → 详解页 Client（双栏布局、音频播放器、显示答案）
-│   ├── profile/              → 个人资料 + 头像上传
-│   ├── dashboard/analytics/  → Recharts 数据面板
-│   └── api/
-│       ├── eval/objective/   → 客观题批改 API
-│       ├── eval/subjective/  → 主观题 GPT-4o 批改 API
-│       ├── analytics/        → 成绩聚合（history[]）
-│       ├── upload/           → 头像上传 → /public/uploads/
-│       └── auth/[...nextauth]/ → NextAuth
-│
-├── src/components/
-│   ├── DashboardClient.tsx   → 主仪表盘（993行）：导航栏、题库列表、历史记录 Dialog
-│   └── eval/
-│       ├── EvalWrapper.tsx   → category 路由分派（Writing/Speaking → Subjective；其余 → Objective）
-│       ├── ObjectiveRenderer.tsx → 阅读/听力渲染器（1015行）
-│       └── SubjectiveRenderer.tsx → 写作/口语渲染器
-│
-└── src/lib/
-    ├── auth.ts               → NextAuth 配置（Credentials + JWT callbacks）
-    ├── prisma.ts             → Prisma 单例（防重复连接）
-    ├── testSession.ts        → localStorage 持久化工具（saveUnitState/getUnitState/clearUnitState）
-    └── utils.ts              → formatIELTSTitle()、cn()
-```
 
----
-
-## 4. Prisma 数据模型（精简版）
-
-```prisma
-model QuestionUnit {
-  id        String      // UUID
-  sourceId  String      // 原始数据 ID
-  title     String      // 如 "Cambridge 15 Test 1 Passage 1"
-  audioUrl  String?     // 本地磁盘绝对路径，渲染时需转换
-  category  String      // "Reading/Listening" | "Writing" | "Speaking"
-  passage   Json        // [{english: "...", chinese: "..."}] 或 string[]
-  questions Question[]
-  submissions Submission[]
-}
-model Question {
-  serialNumber     Int
-  type             String   // "radio" | "checkbox" | "fill"
-  stem             String   // 可含 {{response}} token 和 HTML
-  options          Json?    // string[] 或 {label,value}[] ⚠️ 需 formatAnswer()
-  answer           Json?    // string 或 string[] 或 {label,value} ⚠️ 需 formatAnswer()
-  officialAnalysis Json?    // string 或 object ⚠️ 需 formatAnswer()
-}
-model Submission {
-  userId    String?
-  unitId    String
-  answers   Json     // {questionId: string[]} — 用户答案 Map
-  aiScore   Json?    // 客观题: {scoreRatio, results:[{questionId, isCorrect, userAnswer, subResults}]}
-                     // 主观题: {TR, CC, LR, GRA, totalScore, summary}
-  aiFeedback String? // Markdown 格式点评
-}
-model User { id, name, email, password(bcrypt'd), image }
-```
-
----
-
-## 5. 核心组件接口（避免查源码）
-
-### `ObjectiveRenderer` props
-
-```ts
-{
-  unit: (QuestionUnit & { questions },
-    onResult,
-    result,
-    isLastPart,
-    allFlowIds);
-}
-```
-
-- `allFlowIds`: 全卷模式时相邻 Part 的 ID 数组，用于批量提交
-- `result`: 评分后由 `onResult` 传入的 API 响应数据
-- `isLastPart`: 是否显示"全卷提交"按钮
-
-### `ReviewClient` props
-
-```ts
-{ unit: QuestionUnit & {questions}, submission: Submission|null, isObjective: boolean, calculatedScore: number }
-```
-
-### Analytics API 返回格式（`/api/analytics`）
-
-```ts
-{
-  history: Array<{
-    id;
-    unitId;
-    category;
-    score: string;
-    createdAt;
-    // score 是浮点字符串，前端需 Math.round(parseFloat(score)*2)/2 转成 IELTS 格式
-  }>;
-}
-```
-
----
-
-## 6. 关键工具函数
-
-```ts
-// src/lib/utils.ts
-formatIELTSTitle(rawTitle: string): string
-// 将 "C15-T1-Passage1_新东方..." 转为 "Cambridge 15 Test 1 Passage 1"
-
-// src/lib/testSession.ts
-saveUnitState(unitId, category, reqIds, answers, timeSpent)
-getUnitState(unitId): {answers, timeSpent, reqIds, category}
-clearUnitState(unitId)
-
-// src/app/review/[id]/ReviewClient.tsx（局部工具函数）
-formatAnswer(answer: any): string
-// 安全序列化 Prisma Json? 字段，处理 string/string[]/{label,value}/null 所有情况
-```
-
----
-
-## 7. ⚠️ 已知陷阱与规范
-
-### 数据安全渲染（最重要）
-
-所有渲染 `q.answer`、`q.options[]`、`q.officialAnalysis`、`resData.userAnswer` 的地方，
-**必须经过 `formatAnswer()` 序列化**，直接 `{q.answer}` 会导致：
-
-```
-Error: Objects are not valid as a React child (found: object with keys {label, value})
-```
-
-### isObjective 判断
-
-```ts
-// ✅ 正确
-const isObjective =
-  unit.category === "Reading" ||
-  unit.category === "Listening" ||
-  unit.category === "Reading/Listening";
-// ❌ 错误（DB 里不存 "Reading" 或 "Listening" 单独值）
-const isObjective =
-  unit.category === "Reading" || unit.category === "Listening";
-```
-
-### Review 页 submissionId 传参
-
-```ts
-// ✅ 历史记录详解链接应带 submissionId
-href={`/review/${u.id}?submissionId=${attempt.id}`}
-// ❌ 不带则永远只显示最新提交
-href={`/review/${u.id}`}
-```
-
-### 音频 URL 渲染
-
-```ts
-// ✅ 取文件名
-src={`/audios/${unit.audioUrl.split("/").pop()}`}
-// ❌ 直接用绝对路径
-src={unit.audioUrl}
-```
-
-### NextAuth Session 更新
-
-更新用户资料后，前端必须调用 `update({name, image})` 触发 JWT 刷新，
-否则 Navbar 头像不会更新。完整链路：
-`ProfileClient → POST /api/upload → update() → auth.ts jwt() callback`
-
----
-
-## 8. API 端点速查
-
-| 端点                   | 方法 | 用途                                                 |
-| ---------------------- | ---- | ---------------------------------------------------- |
-| `/api/eval/objective`  | POST | 批改客观题，body: `{unitId, userAnswers, timeSpent}` |
-| `/api/eval/subjective` | POST | GPT-4o 批改主观题，同上                              |
-| `/api/analytics`       | GET  | 获取当前用户所有提交历史                             |
-| `/api/upload`          | POST | 头像上传，FormData，存到 `/public/uploads/`          |
-| `/api/auth/session`    | GET  | NextAuth 标准 session 端点                           |
-
----
-
-## 9. 当前完成状态（Phase 1-5 全部 ✅）
-
-- ✅ 客观题双栏渲染（拖拽分割、荧光笔、多选限制）
-- ✅ 主观题 AI 评分（TR/CC/LR/GRA 四维度）
-- ✅ localStorage 状态恢复（AlertDialog）
-- ✅ 全卷批量提交
-- ✅ NextAuth Credentials 认证
-- ✅ 头像本地上传
-- ✅ 成绩聚合 API + Recharts 图表
-- ✅ Dashboard 历史记录表格 + Dialog
-- ✅ Review 详解页（双栏、音频播放器、显示/隐藏答案、题目解析折叠）
-- ✅ BUG FIX: isObjective 判断修正
-- ✅ BUG FIX: Review 页所有 Json? 字段用 formatAnswer() 安全渲染
-- ✅ BUG FIX: 历史记录 submissionId 精准传参
-
----
-
-## 10. 常见任务快速参考
-
-**添加新 API 路由** → `src/app/api/[name]/route.ts`，使用 `import { prisma } from "@/lib/prisma"`
-
-**修改数据库 Schema** → 编辑 `prisma/schema.prisma` → `npx prisma migrate dev`
-
-**添加新 shadcn 组件** → `npx shadcn-ui@latest add [组件名]`
-
-**调试 500 错误** → 先检查渲染的 Json? 字段是否经过序列化
-
-**运行开发服务器** → `npm run dev`（已在运行：`localhost:3000`）
-
-**数据库入库** → `npx ts-node scripts/seed.ts`（或查看 scripts/ 目录）

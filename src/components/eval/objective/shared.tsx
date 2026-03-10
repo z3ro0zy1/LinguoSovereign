@@ -1,19 +1,12 @@
 /* eslint-disable @next/next/no-img-element */
 import parse, { type HTMLReactParserOptions } from "html-react-parser";
+import { resolveStaticAssetUrl } from "@/lib/utils";
 
 type ParsedDomNode = {
   type?: string;
   name?: string;
   attribs?: Record<string, string>;
 };
-
-function fixAssetPath(src: string) {
-  if (src.startsWith("images/")) return `/${src}`;
-  if (src.startsWith("../images/")) {
-    return src.replace("../images/", "/images/");
-  }
-  return src;
-}
 
 export const imageFixingOptions: HTMLReactParserOptions = {
   replace(domNode) {
@@ -22,7 +15,7 @@ export const imageFixingOptions: HTMLReactParserOptions = {
       return (
         <img
           {...node.attribs}
-          src={fixAssetPath(node.attribs.src)}
+          src={resolveStaticAssetUrl(node.attribs.src)}
           className="mx-auto my-4 h-auto max-w-full rounded shadow-sm"
           alt="IELTS Graphic"
         />

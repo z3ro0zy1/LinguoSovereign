@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
-import parse, { type HTMLReactParserOptions } from "html-react-parser";
+import { type HTMLReactParserOptions } from "html-react-parser";
 import type { ReactNode } from "react";
+import { resolveStaticAssetUrl } from "@/lib/utils";
 
 type ReviewSubResult = {
   isCorrect?: boolean;
@@ -13,12 +14,6 @@ type ParsedDomNode = {
   data?: string;
   attribs?: Record<string, string>;
 };
-
-function normalizeReviewImageSrc(src: string) {
-  if (src.startsWith("images/")) return `/${src}`;
-  if (src.startsWith("../images/")) return src.replace("../images/", "/images/");
-  return src;
-}
 
 export function formatAnswer(answer: unknown): string {
   if (answer === null || answer === undefined) return "N/A";
@@ -60,7 +55,7 @@ export function buildReviewParseOptions(
         return (
           <img
             {...node.attribs}
-            src={normalizeReviewImageSrc(node.attribs.src)}
+            src={resolveStaticAssetUrl(node.attribs.src)}
             className="mx-auto my-4 h-auto max-w-full rounded shadow-sm"
             alt="IELTS Graphic"
           />
@@ -143,6 +138,97 @@ function CheckIcon({ className }: { className?: string }) {
   );
 }
 
-export function parseRichAnswer(value: string) {
-  return parse(value.replace(/\n/g, "<br/>"));
+function renderInlineMarkdown(text: string, keyPrefix: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return (
+        <strong key={`${keyPrefix}-${index}`} className="font-bold text-slate-900">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    return <span key={`${keyPrefix}-${index}`}>{part}</span>;
+  });
+}
+
+export function parseRichAnswer(value: string): ReactNode[] {
+  const lines = value.split(/\r?\n/);
+  const nodes: ReactNode[] = [];
+  let paragraphBuffer: string[] = [];
+  let listBuffer: string[] = [];
+
+  const flushParagraph = () => {
+    if (!paragraphBuffer.length) return;
+    const textValue = paragraphBuffer.join(" ").trim();
+    if (!textValue) {
+      paragraphBuffer = [];
+      return;
+    }
+    const key = `paragraph-${nodes.length}`;
+    nodes.push(
+      <p key={key} className="text-[15px] leading-8 text-slate-700">
+        {renderInlineMarkdown(textValue, key)}
+      </p>,
+    );
+    paragraphBuffer = [];
+  };
+
+  const flushList = () => {
+    if (!listBuffer.length) return;
+    const key = `list-${nodes.length}`;
+    nodes.push(
+      <ul key={key} className="list-disc space-y-2 pl-5 text-[15px] leading-8 text-slate-700 marker:text-slate-400">
+        {listBuffer.map((item, index) => (
+          <li key={`${key}-${index}`}>{renderInlineMarkdown(item, `${key}-${index}`)}</li>
+        ))}
+      </ul>,
+    );
+    listBuffer = [];
+  };
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+
+    if (!line) {
+      flushParagraph();
+      flushList();
+      return;
+    }
+
+    if (line.startsWith("### ")) {
+      flushParagraph();
+      flushList();
+      nodes.push(
+        <h4 key={`h4-${nodes.length}`} className="text-xl font-black text-slate-900">
+          {line.slice(4)}
+        </h4>,
+      );
+      return;
+    }
+
+    if (line.startsWith("## ")) {
+      flushParagraph();
+      flushList();
+      nodes.push(
+        <h3 key={`h3-${nodes.length}`} className="text-2xl font-black tracking-tight text-slate-900">
+          {line.slice(3)}
+        </h3>,
+      );
+      return;
+    }
+
+    if (line.startsWith("- ") || line.startsWith("* ")) {
+      flushParagraph();
+      listBuffer.push(line.slice(2).trim());
+      return;
+    }
+
+    paragraphBuffer.push(line);
+  });
+
+  flushParagraph();
+  flushList();
+
+  return nodes;
 }

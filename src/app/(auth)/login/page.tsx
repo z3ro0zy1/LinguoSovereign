@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<LoginShell registered={false} />}>
+    <Suspense fallback={<LoginShell registered={false} callbackUrl="/" />}>
       <LoginPageInner />
     </Suspense>
   );
@@ -17,10 +17,15 @@ export default function LoginPage() {
 
 function LoginPageInner() {
   const searchParams = useSearchParams();
-  return <LoginShell registered={searchParams.get("registered") === "true"} />;
+  return (
+    <LoginShell
+      registered={searchParams.get("registered") === "true"}
+      callbackUrl={searchParams.get("callbackUrl") || "/"}
+    />
+  );
 }
 
-function LoginShell({ registered }: { registered: boolean }) {
+function LoginShell({ registered, callbackUrl }: { registered: boolean; callbackUrl: string }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -38,6 +43,7 @@ function LoginShell({ registered }: { registered: boolean }) {
       redirect: false,
       email,
       password,
+      callbackUrl,
     });
 
     if (response?.error) {
@@ -46,7 +52,7 @@ function LoginShell({ registered }: { registered: boolean }) {
       return;
     }
 
-    router.replace("/");
+    router.replace(callbackUrl);
     router.refresh();
   };
 

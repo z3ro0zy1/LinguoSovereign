@@ -1,4 +1,13 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @next/next/no-img-element */
+/**
+ * 客观题渲染器 (Objective Renderer)
+ * 作用：专门负责“雅思机考”模式的阅读和听力题目。
+ * 特点：
+ * 1. 左右分栏：左边看文章/听录音，右边做题。支持拖动调整比例。
+ * 2. 真实模考：带计时器，阅读倒计时，听力正计时。
+ * 3. 划线功能：模拟考场划线高亮。
+ * 4. 自动存档：做题进度实时保存，断网或刷新也不怕。
+ */
+
 "use client";
 
 import { useState, useEffect, useRef } from "react";
@@ -11,70 +20,59 @@ import {
   Type,
   Highlighter,
   Eraser,
-} from "lucide-react";
-import parse, { HTMLReactParserOptions } from "html-react-parser";
-import { saveUnitState, getUnitState, clearUnitState } from "@/lib/testSession";
+} from "lucide-react"; // UI 图标
+import parse, { HTMLReactParserOptions } from "html-react-parser"; // HTML 字符串转 React 组件的工具
+import { saveUnitState, getUnitState, clearUnitState } from "@/lib/testSession"; // 本地存档工具
 import { resolveAudioUrl } from "@/lib/utils";
-import { QuestionNavigatorPortal } from "./objective/QuestionNavigatorPortal";
-import { ObjectiveQuestionCard } from "./objective/ObjectiveQuestionCard";
-import { RestoreDraftDialog } from "./objective/RestoreDraftDialog";
-import { normalizeQuestionStemHtml, renderPassageBlock } from "./objective/shared";
+/* 引入具体的子功能组件 */
+import { QuestionNavigatorPortal } from "./objective/QuestionNavigatorPortal"; // 底部题号导航（传送门技术）
+import { ObjectiveQuestionCard } from "./objective/ObjectiveQuestionCard"; // 单个题目卡片
+import { RestoreDraftDialog } from "./objective/RestoreDraftDialog"; // 恢复进度弹窗
+import {
+  normalizeQuestionStemHtml,
+  renderPassageBlock,
+} from "./objective/shared"; // 格式化工具
 
-/**
- * AnswersState captures the user's input per question.
- * The key is the question DB ID.
- * The value is an array of strings representing either:
- * - A single selected radio button value like ["A"]
- * - Multiple checkbox values like ["A", "B"]
- * - Fill-in-the-blank answers corresponding to {{response}} tokens
- */
+// --- 类型定义 ---
+// Record<题目ID, 用户填入的答案数组>
 type AnswersState = Record<string, string[]>;
 
-/**
- * ObjectiveRenderer
- *
- * Responsible for rendering structural Objective tests (Reading and Listening).
- *
- * Features:
- * - Displays a live timer (countdown for reading, count-up for listening).
- * - Implements logic to conceal transcripts during Listening tests unless toggled by the user.
- * - Parses rich text HTML questions dynamically and replaces `{{response}}` tokens with inline text inputs.
- * - Grades multi-select, single-select and structural question sets.
- */
 export default function ObjectiveRenderer({
-  unit,
-  onResult,
-  result,
-  isLastPart,
-  allFlowIds,
+  unit, // 题目详情数据
+  onResult, // 提交结果后的回调
+  result, // 如果已经提交过了，这里就是得分结果
+  isLastPart, // 是否是模考流的最后一部分
+  allFlowIds, // 模考流中的所有题目 ID
 }: any) {
+  // 判断是听力还是阅读（听力通常标题带 Part，阅读带 Passage）
   const isListening =
     unit.title.includes("Part") || unit.title.includes("听力");
 
-  // State Tracking
-  const [answers, setAnswers] = useState<AnswersState>({}); // Tracks all user selections
-  const [loading, setLoading] = useState(false); // Manages Submit button locking
-  const [timeSpent, setTimeSpent] = useState(0); // seconds elapsed
-  const [isActive, setIsActive] = useState(false); // Determines if timer should keep ticking
-  const [showTranscript, setShowTranscript] = useState(false); // Controls Audio Transcript visibility
-  const [hasResolvedStartup, setHasResolvedStartup] = useState(false);
+  // --- 核心状态 (State Tracking) ---
+  const [answers, setAnswers] = useState<AnswersState>({}); // 存用户写的所有答案
+  const [loading, setLoading] = useState(false); // 正在提交吗？
+  const [timeSpent, setTimeSpent] = useState(0); // 做了多久了（秒）
+  const [isActive, setIsActive] = useState(false); // 计时器是否在跑
+  const [showTranscript, setShowTranscript] = useState(false); // 是否显示听力原文
+  const [hasResolvedStartup, setHasResolvedStartup] = useState(false); // 是否完成了开机自检
 
-  // Customization States
-  const [fontSizeRatio, setFontSizeRatio] = useState(1); // 1.0 multiplier
-  const [leftPanelRatio, setLeftPanelRatio] = useState(50); // Default 50% width
-  const [isDragging, setIsDragging] = useState(false);
+  // --- 个性化设置 ---
+  const [fontSizeRatio, setFontSizeRatio] = useState(1); // 字体大小缩放 (1.0 = 100%)
+  const [leftPanelRatio, setLeftPanelRatio] = useState(50); // 左侧面板宽度百分比
+  const [isDragging, setIsDragging] = useState(false); // 是否正在拖动分栏条
 
-  // --- Highlighter and Notes Flow ---
-  // Users can select text in the passage to highlight, mimicking the real IELTS computer-based test.
-  const [selectionRange, setSelectionRange] = useState<Range | null>(null);
-  const [menuPos, setMenuPos] = useState({ x: 0, y: 0, show: false }); // Position for 'Highlight/Cancel' popup
-  const [activeMark, setActiveMark] = useState<HTMLElement | null>(null); // tracks clicked <mark> tag for deletion
-  const [clearMenuPos, setClearMenuPos] = useState({ x: 0, y: 0, show: false }); // Position for 'Clear' popup
-  const contentRef = useRef<HTMLDivElement>(null);
-  const listeningAudioRef = useRef<HTMLAudioElement>(null);
+  // --- 划线高亮功能相关 ---
+  const [selectionRange, setSelectionRange] = useState<Range | null>(null); // 用户鼠标选中的范围
+  const [menuPos, setMenuPos] = useState({ x: 0, y: 0, show: false }); // 划线菜单弹出的坐标
+  const [activeMark, setActiveMark] = useState<HTMLElement | null>(null); // 指向被点击的 <mark> 标签
+  const [clearMenuPos, setClearMenuPos] = useState({ x: 0, y: 0, show: false }); // “清除高亮”菜单的坐标
+
+  // 引用 (Ref) 指向 DOM 元素
+  const contentRef = useRef<HTMLDivElement>(null); // 指向文章内容区
+  const listeningAudioRef = useRef<HTMLAudioElement>(null); // 指向音频播放器
 
   /**
-   * clearSelection: Resets browser text selection and hides the custom highlighter ribbon.
+   * 清除当前的文字选中状态
    */
   const clearSelection = () => {
     window.getSelection()?.removeAllRanges();
@@ -82,13 +80,16 @@ export default function ObjectiveRenderer({
     setSelectionRange(null);
   };
 
-  const [showRestorePrompt, setShowRestorePrompt] = useState(false);
+  // --- 存档恢复逻辑 ---
+  const [showRestorePrompt, setShowRestorePrompt] = useState(false); // 是否弹出“由于您之前有未完成的进度，需要恢复吗？”
   const [backedUpState, setBackedUpState] = useState<{
     answers: any;
     timeSpent: number;
   } | null>(null);
 
-  // Initialize from LocalStorage
+  /**
+   * 页面加载时：去 localStorage 翻翻看有没有以前没做完的档案
+   */
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -101,15 +102,18 @@ export default function ObjectiveRenderer({
         answers: state.answers,
         timeSpent: state.timeSpent,
       });
-      setShowRestorePrompt(true);
-      setIsActive(false);
+      setShowRestorePrompt(true); // 弹出询问
+      setIsActive(false); // 暂时停走表，等用户决定
     } else {
-      setIsActive(true);
+      setIsActive(true); // 直接开始跑表
     }
 
     setHasResolvedStartup(true);
   }, [unit.id]);
 
+  /**
+   * 响应：恢复进度
+   */
   const handleRestoreState = () => {
     if (backedUpState) {
       if (Object.keys(backedUpState.answers).length > 0) {
@@ -123,6 +127,9 @@ export default function ObjectiveRenderer({
     setIsActive(true);
   };
 
+  /**
+   * 响应：不要进度了，重新开始
+   */
   const handleDiscardState = () => {
     clearUnitState(unit.id);
     setAnswers({});
@@ -131,7 +138,9 @@ export default function ObjectiveRenderer({
     setIsActive(true);
   };
 
-  // Persist to LocalStorage whenever answers or timeSpent changes
+  /**
+   * 实时写档：每当答案或时间变化，就往 localStorage 存一份
+   */
   useEffect(() => {
     if (typeof window !== "undefined") {
       const reqIds = unit.questions.map((q: any) => q.id);
@@ -139,13 +148,15 @@ export default function ObjectiveRenderer({
     }
   }, [answers, timeSpent, unit.id, unit.category, unit.questions]);
 
-  // Handle Dragging to Resize Panels
+  /**
+   * 功能：拖动手柄调整左右面板宽度 (Resize Panels)
+   */
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging) return;
       const newRatio = (e.clientX / window.innerWidth) * 100;
       if (newRatio >= 20 && newRatio <= 80) {
-        setLeftPanelRatio(newRatio);
+        setLeftPanelRatio(newRatio); // 更新左侧面板的百分比宽度
       }
     };
     const handleMouseUp = () => setIsDragging(false);
@@ -161,46 +172,45 @@ export default function ObjectiveRenderer({
   }, [isDragging]);
 
   /**
-   * handleMouseUpContent: Triggered when user releases mouse button over the passage.
-   * Calculates the bounding rect of the selected text to show the Highland palette ribbon.
+   * 功能：文本选中结束的处理程序 (Highlight Trigger)
+   * 作用：当用户在文章里划词后，算出气泡菜单的位置。
    */
   const handleMouseUpContent = () => {
-    const selection = window.getSelection();
+    const selection = window.getSelection(); // 获取浏览器原生选区
     if (!selection || selection.isCollapsed) {
       setMenuPos((p) => ({ ...p, show: false }));
       return;
     }
 
     const range = selection.getRangeAt(0);
+    // 检查选中区域是否在我们的内容框内部
     if (
       contentRef.current &&
       contentRef.current.contains(range.commonAncestorContainer)
     ) {
-      const rect = range.getBoundingClientRect();
+      const rect = range.getBoundingClientRect(); // 获取选区在视口中的坐标
       setMenuPos({
-        x: rect.left + rect.width / 2,
+        x: rect.left + rect.width / 2, // 气泡显示在选区正上方中间
         y: rect.top - 10,
         show: true,
       });
-      setSelectionRange(range);
+      setSelectionRange(range); // 记录选中模型以便后续包裹标签
     } else {
       setMenuPos((p) => ({ ...p, show: false }));
     }
   };
 
   /**
-   * applyHighlight: Wraps the current selection range in a <mark> tag.
-   * Note: surroundContents() is sensitive to crossing block boundaries;
-   * we catch the error if the user selects across multiple paragraphs.
+   * 功能：执行划线操作 (Apply Highlight)
    */
   const applyHighlight = (colorClass: string) => {
     if (!selectionRange) return;
-    const span = document.createElement("mark");
+    const span = document.createElement("mark"); // 创建一个 <mark> 标签
     span.className = `${colorClass} px-1 rounded transition-colors cursor-pointer group relative`;
 
     try {
-      selectionRange.surroundContents(span);
-      // Bind click handler to existing mark for future deletion
+      selectionRange.surroundContents(span); // 用 mark 标签把选中的文字包起来
+      // 给划线添加点击监听，方便后续“清除”
       span.onclick = (e) => {
         e.stopPropagation();
         const rect = span.getBoundingClientRect();
@@ -213,28 +223,38 @@ export default function ObjectiveRenderer({
         setMenuPos({ x: 0, y: 0, show: false });
       };
     } catch {
-      console.warn("Complex DOM selection wrap failed.");
-      alert("Please highlight within single paragraphs only.");
+      // 跨段落、跨复杂标签时，surroundContents 会失败
+      console.warn("DOM 结构过于复杂，无法包裹。");
+      alert("请在单个段落内进行划词高亮。");
     }
-    clearSelection();
+    clearSelection(); // 操作完后取消选区选中态
   };
 
+  /**
+   * 功能：清除掉之前的划线
+   */
   const handleClearMark = () => {
     if (!activeMark) return;
     const parent = activeMark.parentNode;
+    // 把里面的文字内容还原给父节点
     while (activeMark.firstChild) {
       if (parent) parent.insertBefore(activeMark.firstChild, activeMark);
     }
+    // 移除这个空的 <mark> 标签
     if (parent) parent.removeChild(activeMark);
     setActiveMark(null);
     setClearMenuPos({ x: 0, y: 0, show: false });
   };
 
+  // 如果出现了“继续上次进度”提示框，先暂停播音
   useEffect(() => {
     if (!showRestorePrompt) return;
     listeningAudioRef.current?.pause();
   }, [showRestorePrompt]);
 
+  /**
+   * 功能：听力音频自动播放控制
+   */
   useEffect(() => {
     if (
       !hasResolvedStartup ||
@@ -255,13 +275,24 @@ export default function ObjectiveRenderer({
         audio.currentTime = 0;
         await audio.play();
       } catch (error) {
-        console.warn("Listening autoplay was blocked", error);
+        console.warn("听力自动播放被浏览器拦截", error);
       }
     };
 
     void attemptAutoPlay();
-  }, [hasResolvedStartup, isListening, isActive, result, showRestorePrompt, unit.audioUrl, unit.id]);
+  }, [
+    hasResolvedStartup,
+    isListening,
+    isActive,
+    result,
+    showRestorePrompt,
+    unit.audioUrl,
+    unit.id,
+  ]);
 
+  /**
+   * 功能：当点击页面其他地方时，关闭高亮气泡菜单
+   */
   useEffect(() => {
     const handleDocClick = (e: MouseEvent) => {
       const selection = window.getSelection();
@@ -284,9 +315,13 @@ export default function ObjectiveRenderer({
     return () => document.removeEventListener("mousedown", handleDocClick);
   }, [menuPos.show, clearMenuPos.show, activeMark]);
 
-  // Timer Effect: Ticks up timeSpent by 1 every second while isActive and no result is graded.
+  /**
+   * 功能：秒表定时器 (Timer)
+   * 作用：每一秒更新一次 timeSpent (已用秒数)。
+   */
   useEffect(() => {
     let interval: any = null;
+    // 只有在完成加载、处于活动态（没开弹窗）、且还没出分（没提交）时才跑秒
     if (hasResolvedStartup && isActive && !result) {
       interval = setInterval(() => {
         setTimeSpent((time) => time + 1);
@@ -297,10 +332,14 @@ export default function ObjectiveRenderer({
     return () => clearInterval(interval);
   }, [hasResolvedStartup, isActive, result]);
 
+  // 计算显示出来的剩余时间或正计时
   const displaySeconds = isListening
-    ? timeSpent
-    : Math.max(1200 - timeSpent, 0);
+    ? timeSpent // 听力是正计时（第几分第几秒）
+    : Math.max(1200 - timeSpent, 0); // 阅读是倒计时（20分钟 = 1200秒）
 
+  /**
+   * 功能：时间串格式化 (0 -> 00:00)
+   */
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60)
       .toString()
@@ -310,9 +349,8 @@ export default function ObjectiveRenderer({
   };
 
   /**
-   * toggleCheckbox
-   * Appends or removes a selection for Multi-Select questions
-   * (when an IELTS question allows 2+ options).
+   * 功能：处理多选题 (Multiple Selection)
+   * 逻辑：如果已经选了，再点就取消。如果没选，就加进列表。
    */
   const toggleCheckbox = (qId: string, value: string) => {
     setAnswers((prev) => {
@@ -325,9 +363,8 @@ export default function ObjectiveRenderer({
   };
 
   /**
-   * updateAnswer
-   * Updates an explicit text-input or single-radio-button answer value at a specific index.
-   * (Helpful for questions with multiple blanks like ______ and ______).
+   * 功能：处理填空题或单选题 (Text or Single Selection)
+   * 逻辑：根据题目的 ID 和空格的索引 (index)，更新特定的文字值。
    */
   const updateAnswer = (qId: string, index: number, value: string) => {
     setAnswers((prev) => {
@@ -338,9 +375,12 @@ export default function ObjectiveRenderer({
   };
 
   /**
-   * handleSubmitAll
-   * Fired when the final section completes across the test.
-   * Sends batch network requests to evaluate all sibling parts at once.
+   * 功能：整卷提交 (Handle Submit All)
+   * 逻辑：
+   * 1. 遍历模考流里的所有题目。
+   * 2. 检查是否有漏填。如果有，弹窗温馨提示。
+   * 3. 根据科目类型（听说读写）决定调用哪个后端批改接口。
+   * 4. 批量异步请求并处理结果。
    */
   const handleSubmitAll = async () => {
     if (!allFlowIds || allFlowIds.length === 0) return;
@@ -348,6 +388,7 @@ export default function ObjectiveRenderer({
     let hasEmpty = false;
     const allSubs: any[] = [];
 
+    // 汇总所有关联题目的“答题纸”
     for (const id of allFlowIds) {
       const state = getUnitState(id);
       const ans = state.answers;
@@ -380,7 +421,9 @@ export default function ObjectiveRenderer({
     setIsActive(false);
 
     try {
+      // 同时发起多个请求
       const promises = allSubs.map((sub) => {
+        // 判断接口路径
         const endpoint =
           sub.category === "Writing" || sub.category === "Speaking"
             ? "/api/eval/subjective"
@@ -401,30 +444,30 @@ export default function ObjectiveRenderer({
 
       const results = await Promise.all(promises);
 
+      // 把所有分数写回父组件和本地缓存
       for (const r of results) {
         if (r.data) {
           onResult(r.data, r.unitId);
         }
       }
     } catch (error) {
-      console.error(error);
+      console.error("提交失败:", error);
       setIsActive(true);
     }
     setLoading(false);
   };
 
   /**
-   * getParseOptions
-   * A custom DOM interceptor used inside the mapped question loop.
-   * It allows us to safely bind React Events (onChange/inputs) directly into the raw HTML string
-   * containing the scraped `question.stem`.
+   * 功能：HTML 渲染转换器 (DOM Interceptor)
+   * 作用：把数据库里的 HTML 字符串变成真正的输入框。
+   * 它会扫描题目内容，发现 {{response}} 就塞进一个 <input>。
    */
   const getParseOptions = (questionId: string): HTMLReactParserOptions => {
-    let blankIndex = 0; // Tracks multiple `{{response}}` inputs inside a single paragraph DOM block
+    let blankIndex = 0; // 用于区分同一题里的多个空格
 
     return {
       replace(domNode: any) {
-        // 1. Fix relative image paths in question stems
+        // 1. 自动处理相对路径的图片
         if (
           domNode.type === "tag" &&
           domNode.name === "img" &&
@@ -442,36 +485,36 @@ export default function ObjectiveRenderer({
               {...domNode.attribs}
               src={src}
               className="max-w-full h-auto my-4 rounded shadow-sm mx-auto"
-              alt="IELTS Graphic"
+              alt="题目配图"
             />
           );
         }
 
-        // 2. Parse inline {{response}} input boxes
+        // 2. 核心：把特殊标记 {{response}} 换成输入框
         if (
           domNode.type === "text" &&
           domNode.data &&
           domNode.data.includes("{{response}}")
         ) {
-          // --- Dynamic Input Injection ---
-          // Splits the scraped text by the {{response}} token and inserts controlled React <input> components.
+          // 按标记切分文字
           const parts = domNode.data.split("{{response}}");
           return (
             <>
               {parts.map((part: string, idx: number) => {
-                // If it's the last part, just return the text
+                // 最后一部分文字直接渲染
                 if (idx === parts.length - 1)
                   return <span key={idx}>{part}</span>;
 
-                const currentIdx = blankIndex++; // Local blank counter for multi-fill questions
+                const currentIdx = blankIndex++; // 本空格的索引号
                 const val =
                   (answers[questionId] && answers[questionId][currentIdx]) ||
                   "";
 
-                let resultElem = null;
+                let resultElem = null; // 显示正误的图标/文字
                 let inputClass =
                   "mx-1 inline-block min-w-[120px] border-b-2 border-gray-400 bg-transparent px-2 text-center text-blue-900 align-baseline outline-none focus:border-blue-600";
 
+                // 如果已经“交卷批改”了 (result 有值)
                 if (result) {
                   const qResult = result.results?.find(
                     (r: any) => r.questionId === questionId,
@@ -485,18 +528,21 @@ export default function ObjectiveRenderer({
                   ) {
                     const subRes = qResult.subResults[currentIdx];
                     if (subRes.isCorrect) {
+                      // 答对了
                       inputClass =
                         "mx-1 inline-block min-w-[120px] border-b-2 border-green-500 bg-green-50 px-2 text-center font-bold text-green-700 align-baseline";
                       resultElem = (
                         <CheckCircle2 className="inline w-4 h-4 text-green-600 ml-1" />
                       );
                     } else {
+                      // 答错了
                       inputClass =
                         "mx-1 inline-block min-w-[120px] border-b-2 border-red-500 bg-red-50 px-2 text-center text-red-700 line-through align-baseline";
                       resultElem = (
                         <span className="inline-flex items-center gap-1 ml-1 text-xs text-red-600 font-bold bg-red-100 px-2 py-0.5 rounded">
                           <XCircle className="w-3 h-3" />
-                          Ans: {String(subRes.officialAnswer).split(";")[0]}
+                          正确答案:{" "}
+                          {String(subRes.officialAnswer).split(";")[0]}
                         </span>
                       );
                     }
@@ -504,13 +550,16 @@ export default function ObjectiveRenderer({
                 }
 
                 return (
-                  <span key={idx} className="inline-flex flex-wrap items-baseline">
+                  <span
+                    key={idx}
+                    className="inline-flex flex-wrap items-baseline"
+                  >
                     <span>{part}</span>
                     <input
                       type="text"
                       className={inputClass}
                       value={val}
-                      disabled={!!result}
+                      disabled={!!result} // 出分后不可修改
                       onChange={(e) =>
                         updateAnswer(questionId, currentIdx, e.target.value)
                       }
@@ -528,8 +577,9 @@ export default function ObjectiveRenderer({
 
   return (
     <div className="flex flex-col h-[85vh]">
-      {/* Test Control Bar */}
+      {/* 顶部控制栏 (Test Control Bar) */}
       <div className="flex items-center justify-between bg-white border rounded-t-lg p-4 shadow-sm z-10 shrink-0">
+        {/* 左侧：计时器 */}
         <div
           className={`flex items-center gap-2 font-medium ${!isListening && displaySeconds < 300 ? "text-red-500" : "text-gray-700"}`}
         >
@@ -541,19 +591,19 @@ export default function ObjectiveRenderer({
           </span>
           {!isListening && (
             <span className="text-sm text-gray-400 ml-2 hidden sm:inline">
-              (预估)
+              (建议剩余)
             </span>
           )}
         </div>
 
-        {/* Customization Toolbar */}
+        {/* 中间：个性化工具 */}
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1 bg-gray-100/80 p-1 rounded-xl border border-gray-200/60 shadow-inner">
             <Button
               variant="ghost"
               size="sm"
               className="h-8 w-8 p-0 rounded-lg text-gray-500 hover:text-gray-900"
-              onClick={() => setFontSizeRatio((f) => Math.max(0.8, f - 0.1))}
+              onClick={() => setFontSizeRatio((f) => Math.max(0.8, f - 0.1))} // 缩小字号
             >
               <Type className="w-3 h-3" />
             </Button>
@@ -564,20 +614,23 @@ export default function ObjectiveRenderer({
               variant="ghost"
               size="sm"
               className="h-8 w-8 p-0 rounded-lg text-gray-500 hover:text-gray-900"
-              onClick={() => setFontSizeRatio((f) => Math.min(1.5, f + 0.1))}
+              onClick={() => setFontSizeRatio((f) => Math.min(1.5, f + 0.1))} // 放大字号
             >
               <Type className="w-4 h-4" />
             </Button>
           </div>
         </div>
 
+        {/* 右侧：提交按钮或分数显示 */}
         <div className="flex items-center gap-3">
           {result ? (
+            // 如果已出分，显示总分
             <div className="px-4 py-2 bg-green-100 text-green-800 rounded-xl font-bold border border-green-200 shadow-sm">
-              Score: {result.summary.totalCorrect} /{" "}
+              得分: {result.summary.totalCorrect} /{" "}
               {result.summary.totalObjective}
             </div>
           ) : isLastPart ? (
+            // 如果是最后一题，显示“全卷提交”
             <Button
               onClick={handleSubmitAll}
               disabled={loading}
@@ -587,8 +640,9 @@ export default function ObjectiveRenderer({
               {loading ? "提交中..." : "全卷提交"}
             </Button>
           ) : (
+            // 否则显示“进行中”状态
             <div className="text-gray-500 font-medium mr-2 text-sm mt-1 animate-pulse flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>进行中
+              <div className="w-2 h-2 bg-green-500 rounded-full"></div>答题中
             </div>
           )}
         </div>
@@ -604,7 +658,7 @@ export default function ObjectiveRenderer({
       <div
         className={`flex flex-col lg:flex-row flex-grow overflow-hidden border-x border-b rounded-b-lg bg-gray-50/30 ${isDragging ? "cursor-col-resize select-none" : ""}`}
       >
-        {/* Left panel: Passage / Transcript */}
+        {/* 左侧面板：文章材料 / 听力原文 (Left panel) */}
         <div
           className="overflow-y-auto p-6 md:p-8 border-b lg:border-b-0 lg:border-r h-[50%] lg:h-full bg-white relative"
           style={{
@@ -616,19 +670,23 @@ export default function ObjectiveRenderer({
         >
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-sm uppercase tracking-wider text-gray-400 font-bold">
-              {isListening ? "Audio Transcript" : "Reading Material"}
+              {isListening
+                ? "听力音频与原文 (Listening)"
+                : "阅读文章 (Reading Material)"}
             </h2>
+            {/* 听力题出完分后，允许切换显示原文 */}
             {isListening && result && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setShowTranscript(!showTranscript)}
               >
-                {showTranscript ? "Hide Transcript" : "Show Transcript"}
+                {showTranscript ? "隐藏原文" : "查看原文"}
               </Button>
             )}
           </div>
 
+          {/* 音频播放器（仅限听力） */}
           {isListening && unit.audioUrl && (
             <div className="mb-6 rounded-xl border bg-gray-50 p-4 shadow-sm">
               <audio
@@ -638,35 +696,39 @@ export default function ObjectiveRenderer({
                 className="h-10 w-full"
                 src={resolveAudioUrl(unit.audioUrl)}
               >
-                Your browser does not support the audio element.
+                您的浏览器不支持音频播放。
               </audio>
             </div>
           )}
 
+          {/* 文章/文本渲染区 */}
           <div
             ref={contentRef}
-            onMouseUp={handleMouseUpContent}
+            onMouseUp={handleMouseUpContent} // 划词结束触发菜单
             className="prose prose-blue relative max-w-none text-gray-800 leading-8 transition-all duration-300 [&_.question-inline-number]:mr-2 [&_.question-inline-number]:font-black [&_.question-inline-number]:text-slate-900 [&_p]:my-4 [&_p]:leading-[1.95] [&_table]:w-full [&_td]:align-top"
             style={{ fontSize: `${1.05 * fontSizeRatio}rem` }}
           >
             {isListening && !result ? (
+              // 听力过程中：隐藏原文，防止作弊
               <div className="flex flex-col items-center justify-center p-12 text-center text-gray-500 h-64 bg-gray-50 rounded-xl border border-dashed border-gray-200">
                 <Headphones className="w-12 h-12 mb-4 text-gray-300" />
-                <p>Transcript is hidden during the listening test.</p>
-                <p className="text-sm mt-2">Focus on the audio.</p>
+                <p>听力测试期间，原文已隐藏</p>
+                <p className="text-sm mt-2">请专注听录音内容</p>
               </div>
             ) : isListening && result && !showTranscript ? (
+              // 出分后：默认也先隐藏原文，点按钮才看
               <div className="flex flex-col items-center justify-center p-12 text-center text-gray-500 h-64 bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                <p>Transcript is hidden by default.</p>
+                <p>听力文本默认隐藏</p>
                 <Button
                   variant="ghost"
                   className="mt-4"
                   onClick={() => setShowTranscript(true)}
                 >
-                  Click to Reveal
+                  点击展开原文进行精听
                 </Button>
               </div>
             ) : (
+              // 渲染具体的段落
               unit.passage?.map((p: any, idx: number) => (
                 <div key={idx} className="text-justify mb-5">
                   {renderPassageBlock(p)}
@@ -674,7 +736,7 @@ export default function ObjectiveRenderer({
               ))
             )}
 
-            {/* Absolute positioning Context Menu for highlighting */}
+            {/* --- 浮动划线菜单 (Highlighting Menu) --- */}
             {menuPos.show && (
               <div
                 className="absolute z-50 transform -translate-x-1/2 -translate-y-full bg-white shadow-[0_20px_40px_-5px_rgba(0,0,0,0.15)] rounded-2xl border border-gray-200/50 p-1 flex items-center gap-1 animate-in fade-in zoom-in-95 duration-200"
@@ -692,7 +754,7 @@ export default function ObjectiveRenderer({
                   className="h-8 px-2 gap-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-xl font-semibold"
                   onClick={() => applyHighlight("bg-blue-200/70")}
                 >
-                  <Highlighter className="w-4 h-4" /> <span>Highlight</span>
+                  <Highlighter className="w-4 h-4" /> <span>蓝划线</span>
                 </Button>
                 <div className="w-px h-5 bg-gray-200 mx-1"></div>
                 <Button
@@ -701,7 +763,7 @@ export default function ObjectiveRenderer({
                   className="h-8 px-2 gap-2 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50 rounded-xl font-semibold"
                   onClick={() => applyHighlight("bg-yellow-200/70")}
                 >
-                  <Highlighter className="w-4 h-4" /> <span>Highlight</span>
+                  <Highlighter className="w-4 h-4" /> <span>黄划线</span>
                 </Button>
                 <div className="w-px h-5 bg-gray-200 mx-1"></div>
                 <Button
@@ -710,12 +772,12 @@ export default function ObjectiveRenderer({
                   className="h-8 px-2 gap-2 text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-xl font-semibold"
                   onClick={clearSelection}
                 >
-                  <Eraser className="w-4 h-4" /> <span>Cancel</span>
+                  <Eraser className="w-4 h-4" /> <span>取消</span>
                 </Button>
               </div>
             )}
 
-            {/* Clear highlight menu */}
+            {/* --- “清除已有划线”小菜单 --- */}
             {clearMenuPos.show && (
               <div
                 id="clear-highlight-menu"
@@ -742,7 +804,7 @@ export default function ObjectiveRenderer({
           </div>
         </div>
 
-        {/* Draggable Divider for Desktop */}
+        {/* 可拖动的分栏条 (Draggable Divider) */}
         <div
           className="hidden lg:flex flex-col items-center justify-center w-2 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 relative group z-20"
           onMouseDown={() => setIsDragging(true)}
@@ -750,7 +812,7 @@ export default function ObjectiveRenderer({
           <div className="h-12 w-1 bg-gray-300 group-hover:bg-blue-400 rounded-full"></div>
         </div>
 
-        {/* Right panel: Questions */}
+        {/* 右侧面板：题目区 (Right panel) */}
         <div
           className="flex flex-col h-[50%] lg:h-full relative"
           style={{
@@ -760,7 +822,8 @@ export default function ObjectiveRenderer({
                 : "100%",
           }}
         >
-          {/* Question Navigator in Footer via Portal */}
+          {/* 这里使用了 React Portal (传送门)，
+              把“题号导航小点”跨组件投影到了我们在 EvalWrapper 里准备好的底部槽位中 */}
           <QuestionNavigatorPortal
             questions={unit.questions}
             answers={answers}
@@ -769,9 +832,10 @@ export default function ObjectiveRenderer({
 
           <div className="overflow-y-auto p-4 md:p-8 flex-1 space-y-8 pb-12">
             <h2 className="text-sm uppercase tracking-wider text-gray-400 font-bold mb-6 mt-2">
-              Questions
+              题目练习 (Questions)
             </h2>
             <div className="space-y-8">
+              {/* 循环渲染每一道题 */}
               {unit.questions.map((q: any) => {
                 const resData = result?.results?.find(
                   (r: any) => r.questionId === q.id,
@@ -786,14 +850,18 @@ export default function ObjectiveRenderer({
                     hasResult={!!result}
                     onToggleCheckbox={toggleCheckbox}
                     onUpdateAnswer={updateAnswer}
-                    renderedStem={(
+                    // 题干内容：需要经过 HTML 转换器处理
+                    renderedStem={
                       <div
                         className="prose prose-slate prose-sm max-w-none text-gray-900 font-medium leading-8 transition-all duration-300 [&_.question-inline-number]:mr-2 [&_.question-inline-number]:font-black [&_.question-inline-number]:text-slate-900 [&_p]:my-4 [&_p]:leading-[1.95] [&_strong]:font-black"
                         style={{ fontSize: `${0.92 * fontSizeRatio}rem` }}
                       >
-                        {parse(normalizeQuestionStemHtml(q.stem, q.serialNumber), getParseOptions(q.id))}
+                        {parse(
+                          normalizeQuestionStemHtml(q.stem, q.serialNumber),
+                          getParseOptions(q.id),
+                        )}
                       </div>
-                    )}
+                    }
                   />
                 );
               })}

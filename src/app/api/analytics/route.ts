@@ -72,6 +72,7 @@ export async function GET() {
       }
 
       let score = 0;
+      let isEvaluated = false;
       const rawScoreAny = sub.aiScore as
         | { scoreRatio?: string | number; timeSpent?: number; TR?: number | string; CC?: number | string; LR?: number | string; GRA?: number | string }
         | null
@@ -82,8 +83,8 @@ export async function GET() {
           const ratio = Number.parseFloat(String(rawScoreAny.scoreRatio ?? "0"));
           score = roundIELTS(ratio * 9);
           totalTime += rawScoreAny.timeSpent || 0;
+          isEvaluated = true;
         } else {
-          // Subjective: average of TR, CC, LR, GRA
           if (rawScoreAny.TR !== undefined) {
             const rawAverage =
               (Number(rawScoreAny.TR) +
@@ -92,12 +93,12 @@ export async function GET() {
                 Number(rawScoreAny.GRA)) /
               4;
             score = roundIELTS(rawAverage);
+            isEvaluated = true;
           }
         }
       }
 
-      // Update aggregate stats
-      if (categoryStats[finalCategory]) {
+      if (isEvaluated && categoryStats[finalCategory]) {
         categoryStats[finalCategory].sum += score;
         categoryStats[finalCategory].count += 1;
       }
@@ -115,6 +116,7 @@ export async function GET() {
 
       const chartCat = finalCategory as keyof (typeof timelineMap)[string];
       if (
+        isEvaluated &&
         timelineMap[date][chartCat] &&
         Array.isArray(timelineMap[date][chartCat])
       ) {
@@ -194,6 +196,13 @@ export async function GET() {
           }
         }
       }
+      const evaluated = Boolean(
+        rawScoreAny && (
+          category === "Reading" ||
+          category === "Listening" ||
+          rawScoreAny.TR !== undefined
+        ),
+      );
       return {
         id: sub.id,
         unitId: sub.unitId,
@@ -202,6 +211,7 @@ export async function GET() {
         unitTitle: sub.unit.title,
         score,
         timeSpent: rawScoreAny?.timeSpent || 0,
+        evaluated,
       };
     });
 

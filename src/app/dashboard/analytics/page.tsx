@@ -26,6 +26,7 @@ type AnalyticsRecord = {
   unitTitle: string;
   score: number;
   timeSpent: number;
+  evaluated?: boolean;
 };
 
 type TimelinePoint = {
@@ -201,7 +202,15 @@ export default function AnalyticsDashboard() {
                       <td className="max-w-[300px] truncate px-4 py-4 font-bold text-gray-900" title={formatIELTSTitle(record.unitTitle)}>
                         {formatIELTSTitle(record.unitTitle).replace(/Cambridge \d+ Test \d+ /i, "").trim() || formatIELTSTitle(record.unitTitle)}
                       </td>
-                      <td className="px-4 py-4 text-center text-base font-black text-gray-900">{record.score}</td>
+                      <td className="px-4 py-4 text-center text-base font-black text-gray-900">
+                        {record.evaluated === false ? (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-sm font-bold text-amber-700">
+                            未评估
+                          </span>
+                        ) : (
+                          record.score
+                        )}
+                      </td>
                       <td className="px-4 py-4 text-center font-mono font-semibold text-gray-500">
                         {Math.floor(record.timeSpent / 60)}:{String(record.timeSpent % 60).padStart(2, "0")}
                       </td>

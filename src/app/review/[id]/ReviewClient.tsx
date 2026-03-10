@@ -13,6 +13,7 @@ import {
 import parse from "html-react-parser";
 import { Switch } from "@/components/ui/switch";
 import { resolveAudioUrl } from "@/lib/utils";
+import { imageFixingOptions } from "@/components/eval/objective/shared";
 import { ReviewAudioPlayer } from "./ReviewAudioPlayer";
 import { ObjectiveReviewQuestionCard } from "./ObjectiveReviewQuestionCard";
 import { buildReviewParseOptions, formatAnswer, parseRichAnswer } from "./review-utils";
@@ -94,7 +95,10 @@ export default function ReviewClient({
   };
 
   const aiScore = submission?.aiScore as any;
-  const aiFeedback = submission?.aiFeedback;
+  const aiFeedback = submission?.aiFeedback as string | undefined;
+  const hasSubjectiveAiEvaluation = Boolean(!isObjective && aiScore && typeof aiScore === "object" && "TR" in aiScore);
+  const rawSubmissionAnswers = submission?.answers as { userAnswers?: Record<string, string>; timeSpent?: number } | null | undefined;
+  const userResponseEntries = Object.entries(rawSubmissionAnswers?.userAnswers || {}).filter(([, value]) => typeof value === "string" && value.trim().length > 0);
 
   /**
    * Map question IDs to their logical "Number" in the test.
@@ -360,9 +364,14 @@ export default function ReviewClient({
         <div className="mx-auto text-lg font-bold text-gray-800">
           Review: {unit.title}
         </div>
-        {submission && (
+        {submission && hasSubjectiveAiEvaluation && (
           <div className="px-4 py-1.5 bg-gray-100 rounded-full text-sm font-bold text-gray-700">
             Score: {calculatedScore}
+          </div>
+        )}
+        {submission && !hasSubjectiveAiEvaluation && (
+          <div className="px-4 py-1.5 rounded-full border border-amber-200 bg-amber-50 text-sm font-bold text-amber-700">
+            已保存，未 AI 评估
           </div>
         )}
       </header>
@@ -416,18 +425,18 @@ export default function ReviewClient({
                   className="bg-gray-50 p-4 rounded-xl border border-gray-200"
                 >
                   <div className="prose prose-sm max-w-none text-gray-800 mb-3 font-serif">
-                    {parse(q.stem)}
+                    {parse(q.stem, imageFixingOptions)}
                   </div>
-                  {formatAnswer(q.answer) !== "N/A" && (
-                    <div className="mt-2 text-sm text-green-800 bg-green-50 p-3 rounded border border-green-200">
-                      <strong className="block mb-1">
-                        Sample Answer / 参考答案:
-                      </strong>
-                      <div className="whitespace-pre-wrap leading-relaxed">
-                        {formatAnswer(q.answer)}
-                      </div>
+                  <div className={`mt-2 rounded border p-3 text-sm ${formatAnswer(q.answer) !== "N/A" ? "border-green-200 bg-green-50 text-green-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
+                    <strong className="mb-1 block">
+                      Sample Answer / 参考答案:
+                    </strong>
+                    <div className="whitespace-pre-wrap leading-relaxed">
+                      {formatAnswer(q.answer) !== "N/A"
+                        ? formatAnswer(q.answer)
+                        : "参考答案暂未录入，先保留此占位框，后续可补充标准范文或官方答案。"}
                     </div>
-                  )}
+                  </div>
                   {q.officialAnalysis && (
                     <div className="mt-3 text-sm text-blue-800 bg-blue-50 p-3 rounded border border-blue-200">
                       <strong className="block mb-1">
@@ -451,29 +460,51 @@ export default function ReviewClient({
               <h3 className="text-sm uppercase text-gray-500 font-bold mb-4">
                 Your Context / Response
               </h3>
-              {/* User's raw text submission */}
-              <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 whitespace-pre-wrap text-sm text-gray-700 mb-6 font-serif leading-relaxed">
-                {submission?.answers
-                  ? JSON.stringify(submission.answers, null, 2).replace(
-                      /\\n/g,
-                      "\n",
-                    )
-                  : "No Content Provided / 未作答"}
+              <div className="mb-6 space-y-3">
+                {userResponseEntries.length ? (
+                  userResponseEntries.map(([questionId, value], index) => {
+                    const matchedQuestion = unit.questions.find((question: any) => question.id === questionId);
+                    return (
+                      <div key={questionId} className="rounded-2xl border border-slate-200 bg-slate-50/90 p-5 shadow-sm">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
+                            {matchedQuestion ? `Response ${index + 1}` : `Answer ${index + 1}`}
+                          </p>
+                          {matchedQuestion?.serialNumber ? (
+                            <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm">
+                              Q{matchedQuestion.serialNumber}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="whitespace-pre-wrap text-[15px] leading-8 text-slate-700 font-serif">
+                          {value}
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                    No Content Provided / 未作答
+                  </div>
+                )}
               </div>
 
               <h3 className="text-sm uppercase text-blue-500 font-bold mt-8 mb-4">
                 AI Critical Analysis
               </h3>
-              {/* AI assessment markdown content */}
-              {aiFeedback ? (
-                <div className="prose max-w-none prose-blue text-sm">
+              {hasSubjectiveAiEvaluation && aiFeedback ? (
+                <div className="space-y-5 rounded-2xl border border-blue-100 bg-blue-50/50 p-5">
                   {parseRichAnswer(aiFeedback)}
                 </div>
-              ) : (
+              ) : hasSubjectiveAiEvaluation ? (
                 <div className="prose max-w-none text-gray-800 text-sm">
                   <pre className="text-xs">
                     {JSON.stringify(aiScore, null, 2)}
                   </pre>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-800">
+                  这次提交只保存了答案，还没有请求 AI 判分。你之后可以回到答题页，再选择“AI 判分并给建议”。
                 </div>
               )}
             </div>

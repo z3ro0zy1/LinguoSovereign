@@ -2,12 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import OpenAI from "openai";
-
-// Assuming we inject OPENAI_API_KEY in our general .env
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || "",
-});
+import { getAiClient, getSubjectiveEvalModel } from "@/lib/ai";
 
 /**
  * POST /api/eval/subjective
@@ -25,7 +20,7 @@ export async function POST(req: NextRequest) {
   try {
     // Basic body params
     const body = await req.json();
-    const { unitId, userAnswers, promptId } = body;
+    const { unitId, userAnswers, promptId, timeSpent, useAi = true } = body;
     // userAnswers format for subjective is likely: { [questionId/partName]: "User transcribed text or typed essay" }
 
     if (!unitId || !userAnswers) {
@@ -44,7 +39,7 @@ export async function POST(req: NextRequest) {
 
     // Identify standard/selected evaluating prompt
     let promptSysMsg =
-      "You are an expert IELTS examiner. Evaluate the following writing or speaking task carefully evaluating TR/CC/LR/GRA. Output structured JSON. ";
+      "You are a professional IELTS examiner. Evaluate the candidate response with clear band-style judgement across TR, CC, LR, and GRA. Be strict, specific, and improvement-oriented. Output structured JSON only.";
 
     if (promptId) {
       const selectedPrompt = await prisma.userPrompt.findUnique({
@@ -62,6 +57,31 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const session = await getServerSession(authOptions);
+    const userId = session?.user && "id" in session.user ? (session.user as { id: string }).id : null;
+
+    if (!userId) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+
+    if (!useAi) {
+      const submission = await prisma.submission.create({
+        data: {
+          unitId,
+          userId,
+          promptId: promptId || null,
+          answers: { userAnswers, timeSpent: timeSpent || 0 },
+        },
+      });
+
+      return NextResponse.json({
+        data: {
+          submissionId: submission.id,
+          mode: "saved",
+        },
+      });
+    }
+
     // Construct the context: System receives the question DOM string and the user response text
     const taskContext = unit.questions
       .map((q) => {
@@ -71,10 +91,9 @@ export async function POST(req: NextRequest) {
       })
       .join("\n\n");
 
-    // Make GPT-4o call requiring JSON output
-    // model: "gpt-4o" is used for high-fidelity evaluation and reliable JSON formatting.
+    const openai = getAiClient();
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: getSubjectiveEvalModel(),
       messages: [
         {
           role: "system",
@@ -99,16 +118,13 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    const session = await getServerSession(authOptions);
-    const userId = session?.user && "id" in session.user ? (session.user as { id: string }).id : null;
-
     // Persist the evaluation
     const submission = await prisma.submission.create({
       data: {
         unitId,
         userId,
         promptId: promptId || null,
-        answers: userAnswers,
+        answers: { userAnswers, timeSpent: timeSpent || 0 },
         aiScore: aiParsed.dimensions || { TR: 0, CC: 0, LR: 0, GRA: 0 },
         aiFeedback:
           aiParsed.summary || aiParsed.raw || "No feedback generated.",
@@ -118,14 +134,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       data: {
         submissionId: submission.id,
+        mode: "ai",
         aiEvaluation: aiParsed,
       },
     });
   } catch (error) {
     console.error("API Error: POST /api/eval/subjective -", error);
+    const details = error instanceof Error ? error.message : "Unknown error";
+    const status = details.includes("AI service is not configured") ? 503 : 500;
     return NextResponse.json(
-      { error: "AI Subjective Evaluation failed", details: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 },
+      { error: "AI Subjective Evaluation failed", details },
+      { status },
     );
   }
 }

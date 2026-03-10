@@ -61,23 +61,13 @@ async function ReviewServerWrapper({
 
   /**
    * Submission Retrieval Logic:
-   * If a specific submissionId is provided (e.g., from history), load that.
-   * Otherwise, fetch the user's most recent submission for this unit.
+   * - If a specific submissionId is provided (e.g. from attempt history), load that exact attempt.
+   * - Otherwise, render the pure reference/detail view with no user submission attached.
    */
   let submission = null;
   if (submissionId && typeof submissionId === "string") {
     submission = await prisma.submission.findUnique({
       where: { id: submissionId },
-    });
-  } else {
-    submission = await prisma.submission.findFirst({
-      where: {
-        userId: (session.user as { id: string }).id,
-        unitId: id,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
     });
   }
 
