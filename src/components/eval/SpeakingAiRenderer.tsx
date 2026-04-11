@@ -1,53 +1,37 @@
-/**
- * 口语 AI 交互组件 (Speaking AI Renderer)
- * 作用：这是一个前端界面，集成了语音识别 (STT) 和 语音合成 (TTS)。
- * 用户每说一句话，它会把录音转成文字，发给 AI，再把 AI 的文字回复念出来。
- */
-
 "use client";
 
+/**
+ * SpeakingAiRenderer
+ * ------------------
+ * 口语“自由对话”模式的前端总控组件。
+ *
+ * 当前版本已经不再依赖：
+ * - 浏览器 SpeechRecognition 做输入转录
+ * - 浏览器 speechSynthesis 做文本朗读
+ *
+ * 而是改成真正的 Gemini Live 原生语音链路：
+ * 1. 前端向我方后端请求 ephemeral token
+ * 2. 浏览器用 token 直连 Gemini Live
+ * 3. 麦克风 PCM 音频实时送入模型
+ * 4. 模型返回原生音频块 + 输入/输出转录
+ * 5. 页面一边播放模型声音，一边把转录同步到对话记录
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import parse from "html-react-parser"; // 用于把数据库里的 HTML 字符串渲染成 React 元素
-import { LoaderCircle, Mic, MicOff, Sparkles, Volume2 } from "lucide-react"; // 图标库
+import parse from "html-react-parser";
+import { GoogleGenAI, Modality } from "@google/genai";
+import {
+  ChevronDown,
+  LoaderCircle,
+  Mic,
+  MicOff,
+  SlidersHorizontal,
+  Sparkles,
+  Volume2,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { imageFixingOptions } from "./objective/shared";
-
-// --- 浏览器语音识别 API 的类型定义 (可以理解为“说明书”) ---
-type BrowserSpeechRecognition = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start: () => void;
-  stop: () => void;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((event: unknown) => void) | null;
-  onend: (() => void) | null;
-};
-
-type SpeechRecognitionAlternativeLike = {
-  transcript: string;
-};
-
-type SpeechRecognitionResultLike = {
-  isFinal: boolean;
-  0: SpeechRecognitionAlternativeLike;
-};
-
-type SpeechRecognitionEventLike = {
-  resultIndex: number;
-  results: ArrayLike<SpeechRecognitionResultLike>;
-};
-
-type SpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
-
-// 让 TypeScript 知道浏览器全局环境下可能有这些语音 API
-declare global {
-  interface Window {
-    SpeechRecognition?: SpeechRecognitionConstructor;
-    webkitSpeechRecognition?: SpeechRecognitionConstructor;
-  }
-}
+import { useLocale } from "@/components/LocaleProvider";
 
 type SpeakingQuestion = {
   id: string;
@@ -65,366 +49,817 @@ type ChatTurn = {
   text: string;
 };
 
+type PromptRecord = {
+  id: string;
+  name: string;
+  content: string;
+  isDefault: boolean;
+};
+
+type LiveTokenResponse = {
+  token: string;
+  model: string;
+};
+
+type LiveSession = Awaited<ReturnType<GoogleGenAI["live"]["connect"]>>;
+
+function encodePcm16ToBase64(samples: Int16Array) {
+  let binary = "";
+  const bytes = new Uint8Array(samples.buffer);
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const slice = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...slice);
+  }
+
+  return window.btoa(binary);
+}
+
+function decodeBase64ToPcm16(base64: string) {
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Int16Array(bytes.buffer);
+}
+
+/**
+ * Live API 语音输入要求是 16kHz PCM16。
+ * 浏览器麦克风通常是 44.1kHz / 48kHz，所以这里做一次轻量重采样。
+ */
+function downsampleTo16k(buffer: Float32Array, inputSampleRate: number) {
+  if (inputSampleRate === 16000) {
+    return buffer;
+  }
+
+  const sampleRateRatio = inputSampleRate / 16000;
+  const outputLength = Math.round(buffer.length / sampleRateRatio);
+  const result = new Float32Array(outputLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+    let accum = 0;
+    let count = 0;
+
+    for (
+      let i = offsetBuffer;
+      i < nextOffsetBuffer && i < buffer.length;
+      i += 1
+    ) {
+      accum += buffer[i];
+      count += 1;
+    }
+
+    result[offsetResult] = count > 0 ? accum / count : 0;
+    offsetResult += 1;
+    offsetBuffer = nextOffsetBuffer;
+  }
+
+  return result;
+}
+
+function float32ToPcm16(float32: Float32Array) {
+  const pcm16 = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i += 1) {
+    const sample = Math.max(-1, Math.min(1, float32[i]));
+    pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+  return pcm16;
+}
+
+function pcm16ToFloat32(pcm16: Int16Array) {
+  const float32 = new Float32Array(pcm16.length);
+  for (let i = 0; i < pcm16.length; i += 1) {
+    float32[i] = pcm16[i] / 0x8000;
+  }
+  return float32;
+}
+
+function buildConversationResumePrompt(conversation: ChatTurn[]) {
+  return conversation
+    .map((turn) => `${turn.role === "assistant" ? "Assistant" : "User"}: ${turn.text}`)
+    .join("\n");
+}
+
+/**
+ * Gemini Live 的转录事件在不同阶段可能表现为：
+ * 1. 逐步扩展后的完整文本
+ * 2. 只包含本次新增的增量片段
+ *
+ * 这里做一个保守合并：
+ * - 如果新文本已经包含旧文本，直接用新文本
+ * - 如果旧文本已经包含新文本，保持旧文本
+ * - 其他情况按增量拼接
+ */
+function mergeTranscriptChunk(previous: string, incoming: string) {
+  const prev = previous.trim();
+  const next = incoming.trim();
+
+  if (!next) return previous;
+  if (!prev) return next;
+  if (next.startsWith(prev)) return next;
+  if (prev.includes(next)) return previous;
+
+  const needsSpace =
+    !prev.endsWith(" ") &&
+    !next.startsWith(" ") &&
+    /[A-Za-z0-9]$/.test(prev) &&
+    /^[A-Za-z0-9]/.test(next);
+
+  return `${previous}${needsSpace ? " " : ""}${incoming}`;
+}
+
 export function SpeakingAiRenderer({ unit }: { unit: SpeakingUnit }) {
-  // --- 状态管理 (States) ---
-  const questions = unit.questions ?? [];
-  const [currentStep, setCurrentStep] = useState(0); // 当前处于第几个口语部分 (Part 1/2/3)
-  const [conversation, setConversation] = useState<ChatTurn[]>([]); // 对话历史记录
-  const [active, setActive] = useState(false); // 对话是否已经开始
-  const [listening, setListening] = useState(false); // 麦克风是否正在监听
-  const [thinking, setThinking] = useState(false); // AI 是否正在思考回复
-  const [error, setError] = useState(""); // 错误信息
-  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null); // 保存浏览器语音识别对象的引用
-  const activeRef = useRef(false); // 用 ref 同步“激活状态”，防止回调里的闭包旧值问题
-  const conversationRef = useRef<ChatTurn[]>([]); // 同上
+  const { t } = useLocale();
+  const [conversation, setConversation] = useState<ChatTurn[]>([]);
+  const [active, setActive] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [thinking, setThinking] = useState(false);
+  const [error, setError] = useState("");
+  const [promptId, setPromptId] = useState<string | null>(null);
+  const [promptName, setPromptName] = useState("");
+  const [promptContent, setPromptContent] = useState("");
+  const [defaultPromptContent, setDefaultPromptContent] = useState("");
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(false);
 
-  const currentQuestion = questions[currentStep];
+  const sessionRef = useRef<LiveSession | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const microphoneStreamRef = useRef<MediaStream | null>(null);
+  const microphoneSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const microphoneProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const silentGainRef = useRef<GainNode | null>(null);
+  const playbackCursorRef = useRef(0);
+  const pendingPlaybackCountRef = useRef(0);
+  const activeRef = useRef(false);
+  const listeningRef = useRef(false);
+  const conversationRef = useRef<ChatTurn[]>([]);
+  const shouldResumeListeningAfterPlaybackRef = useRef(false);
+  const initialGreetingPendingRef = useRef(false);
+  const currentInputTranscriptRef = useRef("");
+  const currentOutputTranscriptRef = useRef("");
 
-  // 缓存渲染后的题目内容
   const currentPromptText = useMemo(() => {
-    return currentQuestion?.stem
-      ? parse(currentQuestion.stem, imageFixingOptions)
-      : null;
-  }, [currentQuestion]);
+    return unit.questions.map((question, index) => (
+      <div
+        key={question.id}
+        className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4"
+      >
+        <p className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
+          Part {index + 1}
+        </p>
+        <div className="prose max-w-none break-words text-[15px] leading-relaxed text-slate-700">
+          {parse(question.stem || "", imageFixingOptions)}
+        </div>
+      </div>
+    ));
+  }, [unit.questions]);
 
-  // 同步 Refs 和 States
   useEffect(() => {
     activeRef.current = active;
   }, [active]);
+
+  useEffect(() => {
+    listeningRef.current = listening;
+  }, [listening]);
 
   useEffect(() => {
     conversationRef.current = conversation;
   }, [conversation]);
 
   /**
-   * 启动麦克风监听 (Start Listening)
-   * 作用：让浏览器开始录音并识别你的话。
+   * 整个 Live 语音链路只维护一个 AudioContext：
+   * - 麦克风输入要经过它做采样读取
+   * - 模型返回的 PCM 音频也要通过它排队播放
+   * 这样不会反复创建/销毁音频图，时延和资源占用都更稳定。
    */
-  const startListening = useCallback(() => {
-    const recognition = recognitionRef.current;
-    if (!recognition) {
-      setError("当前浏览器不支持实时语音识别。请使用 Chrome 或 Edge。");
-      return;
+  const ensureAudioContext = useCallback(async () => {
+    if (typeof window === "undefined") {
+      throw new Error(t("audioPlaybackUnsupported"));
     }
 
-    setError("");
-    recognition.start(); // 开启录音
-    setListening(true);
+    if (!audioContextRef.current) {
+      audioContextRef.current = new window.AudioContext();
+    }
+
+    if (audioContextRef.current.state === "suspended") {
+      await audioContextRef.current.resume();
+    }
+
+    return audioContextRef.current;
+  }, [t]);
+
+  /**
+   * 停掉当前麦克风采集，但不清除页面上的对话记录。
+   * 这是“停止对话后保留内容”的关键：只关音频流，不清状态。
+   */
+  const stopListening = useCallback(() => {
+    microphoneProcessorRef.current?.disconnect();
+    microphoneSourceRef.current?.disconnect();
+    silentGainRef.current?.disconnect();
+    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
+
+    microphoneProcessorRef.current = null;
+    microphoneSourceRef.current = null;
+    microphoneStreamRef.current = null;
+    silentGainRef.current = null;
+    listeningRef.current = false;
+    setListening(false);
   }, []);
 
   /**
-   * 语音朗读 AI 的回复 (Speak AI Reply)
-   * 作用：使用浏览器的文本转语音 (TTS) 功能，把文字念出来。
+   * Gemini Live 在模型说话结束后，需要重新打开本地麦克风，进入下一轮用户输入。
+   * 这里额外做了两个保护：
+   * 1. 还有音频片段没播放完时，不要提前开麦，避免回声串进模型。
+   * 2. 用户已经主动停止会话时，不要自动恢复录音。
    */
-  const speakReply = useCallback(
-    (text: string) => {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = "en-US"; // 设置为美式英语
-      utterance.rate = 1; // 语速正常
+  const tryResumeListeningAfterPlayback = useCallback(async () => {
+    if (
+      !activeRef.current ||
+      listeningRef.current ||
+      !shouldResumeListeningAfterPlaybackRef.current ||
+      pendingPlaybackCountRef.current > 0
+    ) {
+      return;
+    }
 
-      // 当念完之后，如果对话还在继续，就自动开启麦克风听用户说
-      utterance.onend = () => {
-        if (activeRef.current) {
-          startListening();
-        }
-      };
+    shouldResumeListeningAfterPlaybackRef.current = false;
 
-      utterance.onerror = () => {
-        if (activeRef.current) {
-          startListening();
-        }
-      };
+    try {
+      const context = await ensureAudioContext();
+      const session = sessionRef.current;
+      if (!session) return;
 
-      window.speechSynthesis.cancel(); // 停止目前正在念的话
-      window.speechSynthesis.speak(utterance); // 开始念新话
-    },
-    [startListening],
-  );
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
 
-  /**
-   * 向服务器索要 AI 回复 (Request AI Reply)
-   * 作用：把用户说的话发给后端 API，拿到考官（AI）的下个追问。
-   */
-  const requestAiReply = useCallback(
-    async (userMessage: string) => {
-      setThinking(true);
-      setError("");
+      const source = context.createMediaStreamSource(stream);
+      const processor = context.createScriptProcessor(4096, 1, 1);
+      const silentGain = context.createGain();
+      silentGain.gain.value = 0;
 
-      try {
-        const response = await fetch("/api/speaking/live", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            unitId: unit.id,
-            history: conversationRef.current, // 把历史记录也带上，AI 就知道之前聊过什么
-            userMessage,
-          }),
+      processor.onaudioprocess = (event) => {
+        if (!activeRef.current || !sessionRef.current) return;
+
+        const channel = event.inputBuffer.getChannelData(0);
+        const downsampled = downsampleTo16k(channel, context.sampleRate);
+        const pcm16 = float32ToPcm16(downsampled);
+
+        session.sendRealtimeInput({
+          audio: {
+            data: encodePcm16ToBase64(pcm16),
+            mimeType: "audio/pcm;rate=16000",
+          },
         });
+      };
 
-        const json = (await response.json()) as {
-          data?: { reply?: string };
-          error?: string;
-          details?: string;
-        };
+      source.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(context.destination);
 
-        const reply = json.data?.reply;
-        if (!response.ok || !reply) {
-          throw new Error(json.details || json.error || "AI 对话失败");
-        }
+      microphoneStreamRef.current = stream;
+      microphoneSourceRef.current = source;
+      microphoneProcessorRef.current = processor;
+      silentGainRef.current = silentGain;
+      listeningRef.current = true;
+      setListening(true);
+      setThinking(false);
+    } catch (startError) {
+      console.error(startError);
+      setError(
+        startError instanceof Error
+          ? startError.message
+          : t("speechRecognitionFailed"),
+      );
+      setListening(false);
+    }
+  }, [ensureAudioContext, t]);
 
-        // 记录 AI 的回复
-        setConversation((previous) => [
-          ...previous,
-          { role: "assistant", text: reply },
-        ]);
-        // 让浏览器念出来
-        speakReply(reply);
-      } catch (requestError) {
-        console.error(requestError);
-        setError(
-          requestError instanceof Error ? requestError.message : "AI 对话失败",
+  /**
+   * Live API 返回的是 24kHz PCM16 原始音频块，不是浏览器可直接播放的 mp3/wav。
+   * 所以这里要手动把 base64 PCM 转成 AudioBuffer，再按时间轴顺序排队播放。
+   */
+  const enqueueAudioChunk = useCallback(
+    async (base64Audio: string) => {
+      const context = await ensureAudioContext();
+      const pcm16 = decodeBase64ToPcm16(base64Audio);
+      const float32 = pcm16ToFloat32(pcm16);
+      const audioBuffer = context.createBuffer(1, float32.length, 24000);
+      audioBuffer.copyToChannel(float32, 0);
+
+      const source = context.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(context.destination);
+
+      const startAt = Math.max(context.currentTime, playbackCursorRef.current);
+      playbackCursorRef.current = startAt + audioBuffer.duration;
+      pendingPlaybackCountRef.current += 1;
+
+      source.onended = () => {
+        pendingPlaybackCountRef.current = Math.max(
+          0,
+          pendingPlaybackCountRef.current - 1,
         );
-        setActive(false);
-        activeRef.current = false;
-        setListening(false);
-      } finally {
-        setThinking(false);
-      }
+        void tryResumeListeningAfterPlayback();
+      };
+
+      source.start(startAt);
     },
-    [speakReply, unit.id],
+    [ensureAudioContext, tryResumeListeningAfterPlayback],
   );
 
   /**
-   * 初始化语音识别功能 (Initialization)
-   * 作用：在组件加载时，准备好浏览器的语音马达。
+   * Live 转录是“逐步刷新”的：
+   * - 同一轮里，转录文本会不断变长
+   * - 所以不能每来一段就 append 一条新消息
+   * 这里用“如果最后一条还是同角色就覆盖，否则新建”的方式稳定更新气泡。
    */
+  const upsertConversationTurn = useCallback(
+    (role: ChatTurn["role"], text: string) => {
+      if (!text.trim()) return;
+
+      setConversation((previous) => {
+        const next = [...previous];
+        const last = next[next.length - 1];
+
+        if (last?.role === role) {
+          next[next.length - 1] = { ...last, text };
+          return next;
+        }
+
+        return [...next, { role, text }];
+      });
+    },
+    [],
+  );
+
+  /**
+   * 完整关闭一轮 Live 会话：
+   * - 关 SDK session
+   * - 关麦克风
+   * - 清空播放排队状态
+   * 但不清除 conversation，本页内仍然保留历史文本。
+   */
+  const closeLiveSession = useCallback(() => {
+    sessionRef.current?.close();
+    sessionRef.current = null;
+    stopListening();
+    shouldResumeListeningAfterPlaybackRef.current = false;
+    initialGreetingPendingRef.current = false;
+    currentInputTranscriptRef.current = "";
+    currentOutputTranscriptRef.current = "";
+    pendingPlaybackCountRef.current = 0;
+    playbackCursorRef.current = 0;
+  }, [stopListening]);
+
   useEffect(() => {
-    const SpeechRecognitionCtor =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+    let cancelled = false;
 
-    if (!SpeechRecognitionCtor) return;
+    // 自由对话模式有自己独立的 prompt，用 purpose=free_chat 取默认模板。
+    const loadPrompt = async () => {
+      setPromptLoading(true);
+      try {
+        const response = await fetch(
+          "/api/prompts?category=Speaking&purpose=free_chat",
+        );
+        const json = (await response.json()) as { data?: PromptRecord[] };
 
-    const recognition = new SpeechRecognitionCtor();
-    recognition.continuous = false; // 雅思是一句一回，所以不需要一直录
-    recognition.interimResults = false; // 只需要最终结果，不需要中间过程
-    recognition.lang = "en-US"; // 识别英语
-    recognitionRef.current = recognition;
+        if (!response.ok) {
+          throw new Error("prompt-load-failed");
+        }
 
-    // 当浏览器听清楚了你说了什么
-    recognition.onresult = (event) => {
-      let finalTranscript = "";
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const resultItem = event.results[i];
-        if (resultItem?.isFinal) {
-          finalTranscript += resultItem[0].transcript;
+        const selected = json.data?.[0];
+        if (cancelled) return;
+        setPromptId(selected?.id || null);
+        setPromptName(selected?.name || t("promptFallbackName"));
+        setPromptContent(selected?.content || "");
+        setDefaultPromptContent(selected?.content || "");
+      } catch (loadError) {
+        if (cancelled) return;
+        console.error(loadError);
+        setPromptId(null);
+        setPromptName(t("promptFallbackName"));
+        setPromptContent("");
+        setDefaultPromptContent("");
+        setError(t("promptLoadFailed"));
+      } finally {
+        if (!cancelled) {
+          setPromptLoading(false);
         }
       }
-
-      const cleaned = finalTranscript.trim();
-      if (!cleaned) return;
-
-      // 1. 把你说的话显示在屏幕上
-      setConversation((previous) => [
-        ...previous,
-        { role: "user", text: cleaned },
-      ]);
-      // 2. 发给 AI 问考官怎么接
-      void requestAiReply(cleaned);
     };
 
-    recognition.onerror = (event) => {
-      console.error("Speaking AI speech error", event);
-      setListening(false);
-      if (activeRef.current) {
-        setError("语音识别失败。请检查麦克风权限，或改用 Chrome / Edge。");
-      }
-    };
-
-    recognition.onend = () => {
-      setListening(false);
-    };
+    void loadPrompt();
 
     return () => {
-      recognition.stop();
-      recognitionRef.current = null;
-      window.speechSynthesis.cancel();
+      cancelled = true;
     };
-  }, [currentStep, requestAiReply]);
+  }, [t]);
 
   /**
-   * 启动对话 (Start)
-   */
-  const startConversation = async () => {
-    setActive(true);
-    activeRef.current = true;
+   * 建立 Gemini Live 会话的完整步骤：
+   * 1. 请求后端签发 ephemeral token
+   * 2. 前端用这个短期 token 直连 Gemini Live
+   * 3. 注册消息回调，处理输入转录、输出转录、原生音频块
+     * 4. 根据是否已有历史对话，决定是恢复上下文还是请求一段开场白
+     *
+     * 注意：
+     * gemini-3.1-flash-live-preview 对 sendClientContent 的支持更偏“初始历史注入”场景，
+     * 如果没有额外 history 配置，直接拿它做首轮开场很容易报 invalid argument。
+     * 所以这里统一改成 sendRealtimeInput({ text })，让模型像处理普通实时输入一样开口。
+     */
+  const connectLiveSession = useCallback(async () => {
     setError("");
+    setThinking(true);
 
-    // AI 考官的第一句开场白
-    const opening =
-      "Hello. I’m your IELTS speaking examiner. Let’s begin. Please answer the first question naturally.";
-    setConversation([{ role: "assistant", text: opening }]);
-    speakReply(opening);
-  };
+    const tokenResponse = await fetch("/api/speaking/live", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        unitId: unit.id,
+        promptId,
+        promptContent,
+      }),
+    });
 
-  /**
-   * 停止对话 (Stop)
-   */
-  const stopConversation = () => {
+    const tokenJson = (await tokenResponse.json()) as
+      | LiveTokenResponse
+      | { error?: string; details?: string };
+
+    if (!tokenResponse.ok || !("token" in tokenJson)) {
+      throw new Error(
+        ("details" in tokenJson && tokenJson.details) ||
+          ("error" in tokenJson && tokenJson.error) ||
+          t("aiConversationFailed"),
+      );
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: tokenJson.token,
+      httpOptions: { apiVersion: "v1alpha" },
+    });
+
+    const nextSession = await ai.live.connect({
+      model: tokenJson.model,
+      config: {
+        responseModalities: [Modality.AUDIO],
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+      },
+      callbacks: {
+        onopen: () => {
+          setActive(true);
+          activeRef.current = true;
+        },
+        onmessage: (message) => {
+          // Live 会话里服务端消息是多模态混合的：
+          // 既可能带输入转录，也可能带输出转录，还可能带原始音频块。
+          const serverContent = message.serverContent;
+          if (!serverContent) return;
+
+          if (serverContent.inputTranscription?.text) {
+            currentInputTranscriptRef.current = mergeTranscriptChunk(
+              currentInputTranscriptRef.current,
+              serverContent.inputTranscription.text,
+            );
+            upsertConversationTurn("user", currentInputTranscriptRef.current);
+          }
+
+          if (serverContent.outputTranscription?.text) {
+            stopListening();
+            setThinking(true);
+            currentOutputTranscriptRef.current = mergeTranscriptChunk(
+              currentOutputTranscriptRef.current,
+              serverContent.outputTranscription.text,
+            );
+            upsertConversationTurn(
+              "assistant",
+              currentOutputTranscriptRef.current,
+            );
+          }
+
+          if (serverContent.modelTurn?.parts) {
+            stopListening();
+            setThinking(true);
+            shouldResumeListeningAfterPlaybackRef.current = true;
+
+            for (const part of serverContent.modelTurn.parts) {
+              if (part.inlineData?.data) {
+                void enqueueAudioChunk(part.inlineData.data);
+              }
+            }
+          }
+
+          if (serverContent.turnComplete) {
+            setThinking(false);
+            currentInputTranscriptRef.current = "";
+            currentOutputTranscriptRef.current = "";
+
+            if (initialGreetingPendingRef.current) {
+              initialGreetingPendingRef.current = false;
+              shouldResumeListeningAfterPlaybackRef.current = true;
+            }
+
+            void tryResumeListeningAfterPlayback();
+          }
+        },
+        onerror: (liveError) => {
+          console.error("Gemini Live error", liveError);
+          setError(liveError.message || t("aiConversationFailed"));
+          setThinking(false);
+          setActive(false);
+          activeRef.current = false;
+          closeLiveSession();
+        },
+        onclose: (closeEvent) => {
+          setThinking(false);
+          setListening(false);
+          setActive(false);
+          activeRef.current = false;
+
+          if (
+            closeEvent.reason &&
+            closeEvent.reason !== "Connection closed." &&
+            closeEvent.reason !== "Normal Closure"
+          ) {
+            setError(closeEvent.reason);
+          }
+        },
+      },
+    });
+
+    sessionRef.current = nextSession;
+
+    /**
+     * 重新进入当前页面内的同一轮会话时，把已有对话压成一段文本上下文发回模型。
+     * 这不是服务端持久化恢复，只是“本页内停止后继续”的轻量恢复。
+     */
+    if (conversationRef.current.length > 0) {
+      nextSession.sendRealtimeInput({
+        text:
+          `Resume the conversation naturally from this transcript.\n\n${buildConversationResumePrompt(
+            conversationRef.current,
+          )}\n\nReply with one concise continuation in the user's most recent language.`,
+      });
+      shouldResumeListeningAfterPlaybackRef.current = true;
+      return;
+    }
+
+    initialGreetingPendingRef.current = true;
+    nextSession.sendRealtimeInput({
+      text:
+        "Open the session with a brief warm greeting in the user's likely language and invite them to start speaking naturally.",
+    });
+  }, [
+    closeLiveSession,
+    enqueueAudioChunk,
+    promptContent,
+    promptId,
+    stopListening,
+    t,
+    tryResumeListeningAfterPlayback,
+    upsertConversationTurn,
+    unit.id,
+  ]);
+
+  const startConversation = useCallback(async () => {
+    try {
+      await ensureAudioContext();
+      await connectLiveSession();
+    } catch (startError) {
+      console.error(startError);
+      setError(
+        startError instanceof Error ? startError.message : t("aiConversationFailed"),
+      );
+      setThinking(false);
+      setActive(false);
+      activeRef.current = false;
+      closeLiveSession();
+    }
+  }, [closeLiveSession, connectLiveSession, ensureAudioContext, t]);
+
+  const stopConversation = useCallback(() => {
     activeRef.current = false;
     setActive(false);
-    setListening(false);
     setThinking(false);
-    recognitionRef.current?.stop();
-    window.speechSynthesis.cancel();
-  };
+    closeLiveSession();
+  }, [closeLiveSession]);
+
+  useEffect(() => {
+    return () => {
+      closeLiveSession();
+      if (audioContextRef.current) {
+        void audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
+    };
+  }, [closeLiveSession]);
 
   return (
     <div className="flex flex-col gap-6">
-      {/* 顶部进度条 */}
-      {questions.length > 1 && (
-        <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white/70 px-4 py-3 text-sm font-medium text-slate-600 backdrop-blur-sm">
-          <span>
-            Part {currentStep + 1} / {questions.length}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              disabled={currentStep === 0}
-              onClick={() => setCurrentStep((step) => step - 1)}
-            >
-              上一题
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={currentStep === questions.length - 1}
-              onClick={() => setCurrentStep((step) => step + 1)}
-            >
-              下一题
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* 错误提示 */}
-      {error && (
+      {error ? (
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
           {error}
         </div>
-      )}
+      ) : null}
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1.02fr)_minmax(0,1fr)]">
-        {/* 左侧：题目展示区域 */}
         <Card className="min-h-[560px] overflow-hidden rounded-[2rem] border-white/60 bg-white/80 shadow-[0_30px_80px_rgba(15,23,42,0.08)] backdrop-blur-2xl">
           <CardContent className="p-8 lg:p-10">
             <div className="mb-6 flex items-center justify-between gap-4 border-b border-slate-100 pb-5">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">
-                  Prompt Surface
+                  {t("promptSurface")}
                 </p>
                 <h2 className="mt-2 text-2xl font-black text-slate-900">
-                  AI 对话题卡
+                  {t("freeConversationTitle")}
                 </h2>
               </div>
               <div className="rounded-full border border-fuchsia-100 bg-fuchsia-50 px-4 py-1.5 text-xs font-bold text-fuchsia-700">
-                实时模拟模考
+                {t("freeConversationBadge")}
               </div>
             </div>
-            <div className="prose max-w-none break-words text-[15px] leading-relaxed text-slate-700">
-              {currentPromptText}
-            </div>
+            <div className="space-y-4">{currentPromptText}</div>
           </CardContent>
         </Card>
 
-        {/* 右侧：AI 考官对话区域 */}
-        <Card className="rounded-[2rem] border-fuchsia-100 bg-gradient-to-br from-fuchsia-50 via-white to-sky-50 shadow-[0_25px_70px_rgba(168,85,247,0.12)]">
-          <CardContent className="flex h-full flex-col gap-5 p-8 lg:p-10">
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/70 pb-4">
+        <div className="flex h-full flex-col gap-4">
+          <button
+            type="button"
+            onClick={() => setPromptExpanded((value) => !value)}
+            className="flex items-center justify-between rounded-[1.6rem] border border-slate-200 bg-white/75 px-5 py-4 text-left shadow-[0_12px_30px_rgba(15,23,42,0.05)] transition-all hover:border-slate-300 hover:bg-white"
+          >
+            <div className="flex items-center gap-4">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                <SlidersHorizontal className="h-4 w-4" />
+              </div>
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.24em] text-fuchsia-500">
-                  AI Speaking Mode
+                <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                  {t("promptWorkbench")}
                 </p>
-                <h3 className="mt-2 text-2xl font-black text-slate-900">
-                  像真人考官一样连续对话
-                </h3>
-              </div>
-              {/* 状态指示器 */}
-              <div className="flex items-center gap-2 rounded-full border border-white/80 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700">
-                {thinking ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
-                ) : listening ? (
-                  <Mic className="h-4 w-4 text-emerald-600" />
-                ) : (
-                  <Volume2 className="h-4 w-4 text-fuchsia-600" />
-                )}
-                {thinking
-                  ? "AI 思考中"
-                  : listening
-                    ? "正在听你说"
-                    : active
-                      ? "AI 正在陪练"
-                      : "待开始"}
+                <p className="mt-1 text-base font-semibold text-slate-900">
+                  {promptName || t("promptFallbackName")}
+                </p>
               </div>
             </div>
-
-            {/* 控制按钮 */}
-            <div className="flex flex-wrap gap-3">
-              {!active ? (
-                <Button
-                  className="rounded-full bg-slate-900 px-6 text-white hover:bg-slate-800"
-                  onClick={() => void startConversation()}
-                >
-                  <Sparkles className="mr-2 h-4 w-4" /> 开启 AI 对话
-                </Button>
-              ) : (
-                <Button
-                  variant="outline"
-                  className="rounded-full px-6"
-                  onClick={stopConversation}
-                >
-                  <MicOff className="mr-2 h-4 w-4" /> 结束本轮对话
-                </Button>
-              )}
-              {active && !listening && !thinking && (
-                <Button
-                  variant="secondary"
-                  className="rounded-full px-6"
-                  onClick={startListening}
-                >
-                  <Mic className="mr-2 h-4 w-4" /> 轮到我回答
-                </Button>
-              )}
+            <div className="flex items-center gap-3">
+              <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                {promptLoading
+                  ? t("promptLoading")
+                  : promptExpanded
+                    ? t("promptClose")
+                    : t("promptOpen")}
+              </div>
+              <ChevronDown
+                className={`h-4 w-4 text-slate-500 transition-transform ${
+                  promptExpanded ? "rotate-180" : ""
+                }`}
+              />
             </div>
+          </button>
 
-            <div className="rounded-[1.5rem] border border-white/80 bg-white/90 p-5 text-sm leading-7 text-slate-600 shadow-sm">
-              AI 模式会模拟 IELTS 口语考官：你说一句，AI
-              会接一句，并通过浏览器语音播放回复。更适合做实时口语陪练，而不是直接判分。
-            </div>
-
-            {/* 对话气泡列表 */}
-            <div className="flex-1 space-y-3 overflow-y-auto rounded-[1.5rem] border border-white/80 bg-white/90 p-5 shadow-sm">
-              {conversation.length ? (
-                conversation.map((turn, index) => (
-                  <div
-                    key={`${turn.role}-${index}`}
-                    className={`rounded-2xl px-4 py-3 ${turn.role === "assistant" ? "bg-fuchsia-50 text-slate-800" : "bg-slate-100 text-slate-900"}`}
-                  >
-                    <p className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
-                      {turn.role === "assistant" ? "AI Examiner" : "You"}
-                    </p>
-                    <p className="whitespace-pre-wrap text-sm leading-7">
-                      {turn.text}
-                    </p>
+          {promptExpanded ? (
+            <div className="overflow-hidden rounded-[2rem] border border-black/5 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.92))] shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+              <div className="grid gap-0 lg:grid-cols-[0.9fr_1.1fr]">
+                <div className="border-b border-black/5 px-6 py-6 lg:border-b-0 lg:border-r">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.26em] text-slate-400">
+                    {t("promptWorkbench")}
+                  </p>
+                  <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-900">
+                    {promptName || t("promptFallbackName")}
+                  </h3>
+                  <p className="mt-3 text-sm leading-7 text-slate-600">
+                    {t("promptWorkbenchHint")}
+                  </p>
+                  <div className="mt-6 flex flex-wrap gap-3">
+                    <div className="rounded-full border border-black/5 bg-white px-4 py-2 text-xs font-semibold text-slate-600">
+                      {promptLoading ? t("promptLoading") : t("promptName")}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      className="rounded-full px-4"
+                      onClick={() => setPromptContent(defaultPromptContent)}
+                      disabled={promptLoading}
+                    >
+                      {t("promptRefresh")}
+                    </Button>
                   </div>
-                ))
-              ) : (
-                <div className="flex h-full min-h-[280px] items-center justify-center rounded-2xl border border-dashed border-slate-200 text-center text-sm text-slate-400">
-                  点击“开启 AI
-                  对话”后，系统会先以考官身份开场，然后你可以直接用麦克风回答。
                 </div>
-              )}
+                <div className="px-6 py-6">
+                  <label className="text-[11px] font-bold uppercase tracking-[0.26em] text-slate-400">
+                    {t("promptEditorLabel")}
+                  </label>
+                  <textarea
+                    className="mt-4 min-h-[210px] w-full resize-none border-0 bg-transparent p-0 font-mono text-[13px] leading-7 text-slate-700 outline-none"
+                    placeholder={t("promptEmpty")}
+                    value={promptContent}
+                    onChange={(event) => setPromptContent(event.target.value)}
+                    spellCheck={false}
+                  />
+                </div>
+              </div>
             </div>
-          </CardContent>
-        </Card>
+          ) : null}
+
+          <Card className="rounded-[2rem] border-fuchsia-100 bg-gradient-to-br from-fuchsia-50 via-white to-sky-50 shadow-[0_25px_70px_rgba(168,85,247,0.12)]">
+            <CardContent className="flex h-full flex-col gap-5 p-8 lg:p-10">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/70 pb-4">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.24em] text-fuchsia-500">
+                    {t("speakingFreeChatMode")}
+                  </p>
+                  <h3 className="mt-2 text-2xl font-black text-slate-900">
+                    {t("speakingLikeExaminer")}
+                  </h3>
+                </div>
+                <div className="flex items-center gap-2 rounded-full border border-white/80 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700">
+                  {thinking ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : listening ? (
+                    <Mic className="h-4 w-4 text-emerald-600" />
+                  ) : (
+                    <Volume2 className="h-4 w-4 text-fuchsia-600" />
+                  )}
+                  {thinking
+                    ? t("streamingReply")
+                    : listening
+                      ? t("listeningToYou")
+                      : active
+                        ? t("aiCoaching")
+                        : t("readyToStart")}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                {!active ? (
+                  <Button
+                    className="rounded-full bg-slate-900 px-6 text-white hover:bg-slate-800"
+                    onClick={() => void startConversation()}
+                  >
+                    <Sparkles className="mr-2 h-4 w-4" /> {t("startAiConversation")}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    className="rounded-full px-6"
+                    onClick={stopConversation}
+                  >
+                    <MicOff className="mr-2 h-4 w-4" /> {t("endConversation")}
+                  </Button>
+                )}
+                {active && !listening && !thinking ? (
+                  <Button
+                    variant="secondary"
+                    className="rounded-full px-6"
+                    onClick={() => void tryResumeListeningAfterPlayback()}
+                  >
+                    <Mic className="mr-2 h-4 w-4" /> {t("myTurn")}
+                  </Button>
+                ) : null}
+              </div>
+
+              <div className="rounded-[1.5rem] border border-white/80 bg-white/90 p-5 text-sm leading-7 text-slate-600 shadow-sm">
+                {t("aiSpeakingHint")}
+              </div>
+
+              <div className="flex-1 space-y-3 overflow-y-auto rounded-[1.5rem] border border-white/80 bg-white/90 p-5 shadow-sm">
+                {conversation.length ? (
+                  conversation.map((turn, index) => (
+                    <div
+                      key={`${turn.role}-${index}`}
+                      className={`rounded-2xl px-4 py-3 ${
+                        turn.role === "assistant"
+                          ? "bg-fuchsia-50 text-slate-800"
+                          : "bg-slate-100 text-slate-900"
+                      }`}
+                    >
+                      <p className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
+                        {turn.role === "assistant" ? "AI Examiner" : "You"}
+                      </p>
+                      <p className="whitespace-pre-wrap text-sm leading-7">
+                        {turn.text || (thinking && turn.role === "assistant" ? "..." : "")}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="flex h-full min-h-[280px] items-center justify-center rounded-2xl border border-dashed border-slate-200 text-center text-sm text-slate-400">
+                    {t("clickToStartAi")}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );

@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { LanguageToggle } from "@/components/LanguageToggle";
+import { useLocale } from "@/components/LocaleProvider";
 
 interface ProfileClientProps {
   user: {
@@ -28,6 +30,7 @@ interface ProfileClientProps {
 
 export default function ProfileClient({ user }: ProfileClientProps) {
   const router = useRouter();
+  const { t } = useLocale();
   const { update } = useSession();
   const [name, setName] = useState(user.name || "");
   const [image, setImage] = useState(user.image || "");
@@ -44,12 +47,12 @@ export default function ProfileClient({ user }: ProfileClientProps) {
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      setMessage({ type: "error", text: "只支持上传图片文件。" });
+      setMessage({ type: "error", text: t("uploadImage") + " only supports image files." });
       return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      setMessage({ type: "error", text: "图片请控制在 5MB 以内。" });
+      setMessage({ type: "error", text: t("imageUploadHint") });
       return;
     }
 
@@ -67,15 +70,15 @@ export default function ProfileClient({ user }: ProfileClientProps) {
       const data = (await response.json()) as { error?: string; url?: string };
 
       if (!response.ok || !data.url) {
-        setMessage({ type: "error", text: data.error || "头像上传失败。" });
+        setMessage({ type: "error", text: data.error || `${t("avatarUpload")} failed.` });
         return;
       }
 
       setImage(data.url);
-      setMessage({ type: "success", text: "头像上传成功，保存后会同步到导航栏。" });
+      setMessage({ type: "success", text: `${t("avatarUpload")} OK.` });
     } catch (error) {
       console.error(error);
-      setMessage({ type: "error", text: "上传过程出现异常，请稍后重试。" });
+      setMessage({ type: "error", text: t("networkErrorRetry") });
     } finally {
       setUploadingImage(false);
       event.target.value = "";
@@ -96,17 +99,17 @@ export default function ProfileClient({ user }: ProfileClientProps) {
       const data = (await response.json()) as { error?: string };
 
       if (!response.ok) {
-        setMessage({ type: "error", text: data.error || "资料更新失败。" });
+        setMessage({ type: "error", text: data.error || `${t("saveProfile")} failed.` });
         return;
       }
 
       await update({ name, image });
       setPassword("");
-      setMessage({ type: "success", text: "资料已更新。" });
+      setMessage({ type: "success", text: `${t("saveProfile")} OK.` });
       router.refresh();
     } catch (error) {
       console.error(error);
-      setMessage({ type: "error", text: "保存失败，请稍后重试。" });
+      setMessage({ type: "error", text: t("networkErrorRetry") });
     } finally {
       setLoading(false);
     }
@@ -114,9 +117,10 @@ export default function ProfileClient({ user }: ProfileClientProps) {
 
   return (
     <div className="space-y-8">
+      <div className="flex justify-end"><LanguageToggle /></div>
       <Link href="/">
         <Button variant="ghost" className="-ml-4 rounded-full text-slate-500 hover:bg-white/70 hover:text-slate-900">
-          <ArrowLeft className="mr-2 h-4 w-4" /> 返回控制台
+          <ArrowLeft className="mr-2 h-4 w-4" /> {t("backToDashboard")}
         </Button>
       </Link>
 
@@ -124,7 +128,7 @@ export default function ProfileClient({ user }: ProfileClientProps) {
         <form onSubmit={handleSubmit}>
           <CardContent className="grid gap-10 p-8 lg:grid-cols-[280px_minmax(0,1fr)] lg:p-10">
             <div className="rounded-[1.75rem] border border-slate-100 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800 p-6 text-white shadow-[0_24px_60px_rgba(15,23,42,0.28)]">
-              <p className="text-xs font-bold uppercase tracking-[0.22em] text-white/55">Profile Preview</p>
+              <p className="text-xs font-bold uppercase tracking-[0.22em] text-white/55">{t("profilePreview")}</p>
               <div className="mt-6 flex flex-col items-center text-center">
                 <div className="relative h-32 w-32 overflow-hidden rounded-full border-4 border-white/15 bg-white/5 shadow-xl">
                   {image ? (
@@ -135,16 +139,16 @@ export default function ProfileClient({ user }: ProfileClientProps) {
                     </div>
                   )}
                 </div>
-                <h2 className="mt-5 text-2xl font-black">{name || "Unnamed user"}</h2>
-                <p className="mt-2 text-sm text-white/65">{user.email || "No email"}</p>
+                <h2 className="mt-5 text-2xl font-black">{name || t("unnamedUser")}</h2>
+                <p className="mt-2 text-sm text-white/65">{user.email || t("noEmail")}</p>
               </div>
 
               <div className="mt-8 space-y-3 text-sm text-white/72">
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  支持本地头像上传，保存后会即时刷新导航栏显示。
+{t("profileUploadTip1")}
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  建议使用 1:1 比例图片，文件大小控制在 5MB 以内。
+{t("profileUploadTip2")}
                 </div>
               </div>
             </div>
@@ -159,20 +163,20 @@ export default function ProfileClient({ user }: ProfileClientProps) {
               <div className="grid gap-6">
                 <div className="grid gap-2">
                   <label className="flex items-center gap-2 text-sm font-bold text-slate-700">
-                    <User className="h-4 w-4 text-sky-600" /> 昵称
+                    <User className="h-4 w-4 text-sky-600" /> {t("nickname")}
                   </label>
                   <input
                     type="text"
                     value={name}
                     onChange={(event) => setName(event.target.value)}
-                    placeholder="输入展示名称"
+                    placeholder={t("enterDisplayName")}
                     className="h-12 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 font-medium text-slate-900 outline-none transition-all focus:border-sky-400 focus:ring-4 focus:ring-sky-400/15"
                   />
                 </div>
 
                 <div className="grid gap-2">
                   <label className="flex items-center gap-2 text-sm font-bold text-slate-700">
-                    <Mail className="h-4 w-4 text-indigo-600" /> 邮箱
+                    <Mail className="h-4 w-4 text-indigo-600" /> {t("emailAddress")}
                   </label>
                   <input
                     type="email"
@@ -180,18 +184,18 @@ export default function ProfileClient({ user }: ProfileClientProps) {
                     readOnly
                     className="h-12 cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 px-4 font-medium text-slate-500"
                   />
-                  <p className="text-xs text-slate-400">邮箱作为登录标识，不在此页面修改。</p>
+                  <p className="text-xs text-slate-400">{t("emailImmutable")}</p>
                 </div>
 
                 <div className="grid gap-2">
                   <label className="flex items-center gap-2 text-sm font-bold text-slate-700">
-                    <ImageIcon className="h-4 w-4 text-amber-600" /> 头像上传
+                    <ImageIcon className="h-4 w-4 text-amber-600" /> {t("avatarUpload")}
                   </label>
                   <div className="flex flex-wrap items-center gap-4 rounded-[1.5rem] border border-slate-200 bg-slate-50/80 p-4">
                     <div className="relative overflow-hidden">
                       <Button type="button" variant="outline" disabled={uploadingImage} className="rounded-full px-5">
                         {uploadingImage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                        上传图片
+                        {t("uploadImage")}
                       </Button>
                       <input
                         type="file"
@@ -200,19 +204,19 @@ export default function ProfileClient({ user }: ProfileClientProps) {
                         className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                       />
                     </div>
-                    <p className="text-sm text-slate-500">支持 JPG / PNG / WEBP，最大 5MB。</p>
+                    <p className="text-sm text-slate-500">{t("imageUploadHint")}</p>
                   </div>
                 </div>
 
                 <div className="grid gap-2 border-t border-slate-100 pt-6">
                   <label className="flex items-center gap-2 text-sm font-bold text-slate-700">
-                    <Lock className="h-4 w-4 text-rose-600" /> 新密码
+                    <Lock className="h-4 w-4 text-rose-600" /> {t("newPassword")}
                   </label>
                   <input
                     type="password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
-                    placeholder="留空则保持当前密码"
+                    placeholder={t("keepPassword")}
                     className="h-12 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 font-medium text-slate-900 outline-none transition-all focus:border-sky-400 focus:ring-4 focus:ring-sky-400/15"
                   />
                 </div>
@@ -221,7 +225,7 @@ export default function ProfileClient({ user }: ProfileClientProps) {
               <div className="mt-10 flex justify-end">
                 <Button type="submit" disabled={loading} className="rounded-full bg-slate-900 px-8 text-white hover:bg-slate-800">
                   {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                  保存资料
+                  {t("saveProfile")}
                 </Button>
               </div>
             </div>

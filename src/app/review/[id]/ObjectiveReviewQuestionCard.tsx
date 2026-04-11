@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { CheckCircle2, ChevronDown, ChevronUp, XCircle } from "lucide-react";
 import parse from "html-react-parser";
 import { formatAnswer } from "./review-utils";
+import { useLocale } from "@/components/LocaleProvider";
 
 type ReviewQuestion = {
   id: string;
@@ -43,6 +44,7 @@ export function ObjectiveReviewQuestionCard({
   isExpanded: boolean;
   onToggleAnalysis: () => void;
 }) {
+  const { t } = useLocale();
   const questionUsesInlineBlanks =
     typeof question.stem === "string" && question.stem.includes("{{response}}");
 
@@ -129,7 +131,7 @@ export function ObjectiveReviewQuestionCard({
             <div className="flex items-center justify-between">
               <div className="flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400">您的答案：</span>
+                  <span className="text-xs text-gray-400">{t("yourAnswer")}:</span>
                   <span
                     className={`font-mono text-sm font-bold ${
                       resultData?.isCorrect
@@ -139,11 +141,11 @@ export function ObjectiveReviewQuestionCard({
                           : "text-gray-400"
                     }`}
                   >
-                    {formatAnswer(resultData?.userAnswer) || "未作答"}
+                    {formatAnswer(resultData?.userAnswer) || t("noContentProvided")}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400">正确答案：</span>
+                  <span className="text-xs text-gray-400">{t("correctAnswer")}:</span>
                   {showAnswers || resultData?.isCorrect !== undefined ? (
                     <span className="font-mono text-sm font-bold text-green-600">
                       {formatAnswer(resultData?.subResults?.[0]?.officialAnswer ?? question.answer)}
@@ -161,7 +163,7 @@ export function ObjectiveReviewQuestionCard({
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-400">正确答案：</span>
+              <span className="text-sm text-gray-400">{t("correctAnswer")}:</span>
               {showAnswers ? (
                 <span className="rounded bg-green-50 px-2 py-0.5 font-mono text-[15px] font-bold text-green-600">
                   {formatAnswer(question.answer)}
@@ -184,7 +186,7 @@ export function ObjectiveReviewQuestionCard({
             <XCircle className="h-4 w-4 text-red-400" />
           )}
           <span className="text-xs text-gray-400">
-            {resultData.isCorrect ? "全部正确" : "含有错误答案"}
+            {resultData.isCorrect ? t("allCorrect") : t("containsErrors")}
           </span>
         </div>
       )}
@@ -195,7 +197,7 @@ export function ObjectiveReviewQuestionCard({
             onClick={onToggleAnalysis}
             className="flex w-full items-center justify-between p-3 text-sm font-semibold text-blue-600 transition-colors hover:bg-blue-50/50"
           >
-            <span>{isExpanded ? "收起解析" : "显示解析"}</span>
+            <span>{isExpanded ? t("hideAnalysis") : t("showAnalysis")}</span>
             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </button>
 

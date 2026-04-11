@@ -79,7 +79,7 @@ async function ReviewServerWrapper({
 
   const aiScore = submission?.aiScore;
   const feedbackData = aiScore as
-    | { scoreRatio?: string | number; TR?: number | string; CC?: number | string; LR?: number | string; GRA?: number | string }
+    | Record<string, string | number | undefined>
     | null
     | undefined;
   let calculatedScore = 0;
@@ -94,19 +94,21 @@ async function ReviewServerWrapper({
       const ratio = Number.parseFloat(String(feedbackData.scoreRatio ?? "0"));
       calculatedScore = roundIELTS(ratio * 9);
     } else {
-      /**
-       * For Writing/Speaking (Subjective):
-       * The score is the average of 4 criteria: Task Response (TR), Coherence & Cohesion (CC),
-       * Lexical Resource (LR), and Grammatical Range & Accuracy (GRA).
-       */
-      if (feedbackData.TR !== undefined) {
+      const subjectDimensions =
+        unit.category === "Speaking"
+          ? ["FC", "LR", "GRA", "P"]
+          : ["TR", "CC", "LR", "GRA"];
+      const subjectScores = subjectDimensions
+        .map((key) => Number(feedbackData[key]))
+        .filter((value) => !Number.isNaN(value));
+
+      if (subjectScores.length) {
         const rawAverage =
-          (Number(feedbackData.TR) +
-            Number(feedbackData.CC) +
-            Number(feedbackData.LR) +
-            Number(feedbackData.GRA)) /
-          4;
+          subjectScores.reduce((sum, value) => sum + value, 0) /
+          subjectScores.length;
         calculatedScore = roundIELTS(rawAverage);
+      } else if (!Number.isNaN(Number(feedbackData.totalScore))) {
+        calculatedScore = roundIELTS(Number(feedbackData.totalScore));
       }
     }
   }

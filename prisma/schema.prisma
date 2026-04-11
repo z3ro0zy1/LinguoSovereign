@@ -33,6 +33,7 @@ model Question {
 model UserPrompt {
   id        String   @id @default(uuid())
   category  String
+  purpose   String   @default("evaluation")
   name      String
   content   String
   isDefault Boolean  @default(false)

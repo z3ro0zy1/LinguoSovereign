@@ -15,6 +15,8 @@ import { Switch } from "@/components/ui/switch";
 import { resolveAudioUrl } from "@/lib/utils";
 import { imageFixingOptions } from "@/components/eval/objective/shared";
 import { ReviewAudioPlayer } from "./ReviewAudioPlayer";
+import { LanguageToggle } from "@/components/LanguageToggle";
+import { useLocale } from "@/components/LocaleProvider";
 import { ObjectiveReviewQuestionCard } from "./ObjectiveReviewQuestionCard";
 import { buildReviewParseOptions, formatAnswer, parseRichAnswer } from "./review-utils";
 
@@ -38,6 +40,7 @@ export default function ReviewClient({
   calculatedScore,
 }: ReviewClientProps) {
   // --- UI State ---
+  const { t } = useLocale();
   const [showTranslate, setShowTranslate] = useState(false); // Toggles Chinese translation for passages
   const [showAnswers, setShowAnswers] = useState(false); // Toggles official answer display when no submission exists
   const [openAnalysis, setOpenAnalysis] = useState<Record<string, boolean>>({}); // Controls accordion state for individual question analysis
@@ -96,7 +99,12 @@ export default function ReviewClient({
 
   const aiScore = submission?.aiScore as any;
   const aiFeedback = submission?.aiFeedback as string | undefined;
-  const hasSubjectiveAiEvaluation = Boolean(!isObjective && aiScore && typeof aiScore === "object" && "TR" in aiScore);
+  const hasSubjectiveAiEvaluation = Boolean(
+    !isObjective &&
+      aiScore &&
+      typeof aiScore === "object" &&
+      ["TR", "CC", "LR", "GRA", "FC", "P", "totalScore"].some((key) => key in aiScore),
+  );
   const rawSubmissionAnswers = submission?.answers as { userAnswers?: Record<string, string>; timeSpent?: number } | null | undefined;
   const userResponseEntries = Object.entries(rawSubmissionAnswers?.userAnswers || {}).filter(([, value]) => typeof value === "string" && value.trim().length > 0);
 
@@ -126,15 +134,16 @@ export default function ReviewClient({
             href="/"
             className="flex items-center gap-2 text-gray-500 hover:text-gray-900 font-semibold transition-colors"
           >
-            <ArrowLeft className="w-5 h-5" /> 返回
+            <ArrowLeft className="w-5 h-5" /> {t("back")}
           </Link>
           <div className="text-lg font-bold text-gray-800 absolute left-1/2 -translate-x-1/2">
             {unit.title}
           </div>
+          <div className="ml-auto mr-4"><LanguageToggle /></div>
           <div className="flex items-center gap-4">
             {submission && (
               <div className="px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full text-sm font-bold border border-blue-200">
-                Score: {calculatedScore}
+                {t("overallBand")}: {calculatedScore}
               </div>
             )}
             <div className="flex gap-2">
@@ -151,14 +160,14 @@ export default function ReviewClient({
                 ) : (
                   <Eye className="w-4 h-4" />
                 )}
-                {showAnswers ? "隐藏答案" : "显示答案"}
+                {showAnswers ? t("hideAnswers") : t("showAnswers")}
               </button>
               <Link
                 href={`/eval/${unit.id}`}
                 className="flex items-center gap-1.5 px-5 py-1.5 text-sm font-medium text-white border border-indigo-600 rounded-full bg-indigo-600 hover:bg-indigo-700 transition-all shadow-sm"
               >
                 <Edit3 className="w-3.5 h-3.5" />
-                答题
+                {t("answerQuestion")}
               </Link>
             </div>
           </div>
@@ -213,7 +222,7 @@ export default function ReviewClient({
             {/* Panel Header: Translation Toggle */}
             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0 bg-slate-50/80">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-bold text-slate-700">原文</span>
+                <span className="text-sm font-bold text-slate-700">{t("originalText")}</span>
                 <Switch
                   checked={showTranslate}
                   onCheckedChange={setShowTranslate}
@@ -222,13 +231,13 @@ export default function ReviewClient({
                 <span
                   className={`text-sm font-bold transition-colors ${showTranslate ? "text-indigo-600" : "text-slate-400"}`}
                 >
-                  译文
+                  {t("translation")}
                 </span>
               </div>
               {isListening && (
                 <div className="flex items-center gap-2 text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full text-xs font-bold border border-indigo-100 shadow-sm">
                   <Headphones className="w-3.5 h-3.5" />
-                  <span>Hearing Transcript</span>
+                  <span>{t("transcript")}</span>
                 </div>
               )}
             </div>
@@ -261,7 +270,7 @@ export default function ReviewClient({
                 </div>
               ) : (
                 <div className="flex items-center justify-center h-full text-gray-400">
-                  无阅读文本或听力底稿
+                  {t("noPassageOrTranscript")}
                 </div>
               )}
             </div>
@@ -359,10 +368,10 @@ export default function ReviewClient({
           href="/"
           className="flex items-center gap-2 text-gray-500 hover:text-gray-900 font-semibold transition-colors"
         >
-          <ArrowLeft className="w-5 h-5" /> 返回控制台
+          <ArrowLeft className="w-5 h-5" /> {t("backToDashboard")}
         </Link>
         <div className="mx-auto text-lg font-bold text-gray-800">
-          Review: {unit.title}
+          {t("reviewLabel")}: {unit.title}
         </div>
         {submission && hasSubjectiveAiEvaluation && (
           <div className="px-4 py-1.5 bg-gray-100 rounded-full text-sm font-bold text-gray-700">
@@ -371,7 +380,7 @@ export default function ReviewClient({
         )}
         {submission && !hasSubjectiveAiEvaluation && (
           <div className="px-4 py-1.5 rounded-full border border-amber-200 bg-amber-50 text-sm font-bold text-amber-700">
-            已保存，未 AI 评估
+            {t("savedWithoutAi")}
           </div>
         )}
       </header>
@@ -379,7 +388,7 @@ export default function ReviewClient({
       <main className="max-w-4xl mx-auto w-full py-10 px-4">
         <div className="space-y-8">
           <h1 className="text-2xl font-bold border-b pb-4">
-            Subjective Evaluation Key
+            {t("subjectiveEvaluationKey")}
           </h1>
 
           {/* Context Panel: Shows the writing prompt or speaking topic context */}
@@ -388,7 +397,7 @@ export default function ReviewClient({
             unit.passage.length > 0 && (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
                 <h3 className="text-lg font-bold mb-4">
-                  Prompt Context / 提示文本
+                  {t("promptContext")}
                 </h3>
                 <div className="space-y-4">
                   {unit.passage.map((p: any, idx: number) => {
@@ -417,7 +426,7 @@ export default function ReviewClient({
           {unit.questions && unit.questions.length > 0 && (
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-6">
               <h3 className="text-lg font-bold mb-4 border-b pb-2">
-                Questions & References / 题目与参考解答
+                {t("questionsAndReferences")}
               </h3>
               {unit.questions.map((q: any) => (
                 <div
@@ -429,18 +438,18 @@ export default function ReviewClient({
                   </div>
                   <div className={`mt-2 rounded border p-3 text-sm ${formatAnswer(q.answer) !== "N/A" ? "border-green-200 bg-green-50 text-green-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
                     <strong className="mb-1 block">
-                      Sample Answer / 参考答案:
+                      {t("sampleAnswer")}:
                     </strong>
                     <div className="whitespace-pre-wrap leading-relaxed">
                       {formatAnswer(q.answer) !== "N/A"
                         ? formatAnswer(q.answer)
-                        : "参考答案暂未录入，先保留此占位框，后续可补充标准范文或官方答案。"}
+                        : t("sampleAnswerPlaceholder")}
                     </div>
                   </div>
                   {q.officialAnalysis && (
                     <div className="mt-3 text-sm text-blue-800 bg-blue-50 p-3 rounded border border-blue-200">
                       <strong className="block mb-1">
-                        Analysis / 题目解析:
+                        {t("analysisLabel")}:
                       </strong>
                       <div className="whitespace-pre-wrap leading-relaxed">
                         {Array.isArray(q.officialAnalysis)
@@ -458,7 +467,7 @@ export default function ReviewClient({
           {submission && (
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 mt-8">
               <h3 className="text-sm uppercase text-gray-500 font-bold mb-4">
-                Your Context / Response
+                {t("yourResponse")}
               </h3>
               <div className="mb-6 space-y-3">
                 {userResponseEntries.length ? (
@@ -468,7 +477,7 @@ export default function ReviewClient({
                       <div key={questionId} className="rounded-2xl border border-slate-200 bg-slate-50/90 p-5 shadow-sm">
                         <div className="mb-3 flex items-center justify-between gap-3">
                           <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
-                            {matchedQuestion ? `Response ${index + 1}` : `Answer ${index + 1}`}
+                            {matchedQuestion ? `${t("responseItem")} ${index + 1}` : `${t("answerItem")} ${index + 1}`}
                           </p>
                           {matchedQuestion?.serialNumber ? (
                             <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm">
@@ -484,13 +493,13 @@ export default function ReviewClient({
                   })
                 ) : (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                    No Content Provided / 未作答
+                    {t("noContentProvided")}
                   </div>
                 )}
               </div>
 
               <h3 className="text-sm uppercase text-blue-500 font-bold mt-8 mb-4">
-                AI Critical Analysis
+                {t("aiCriticalAnalysis")}
               </h3>
               {hasSubjectiveAiEvaluation && aiFeedback ? (
                 <div className="space-y-5 rounded-2xl border border-blue-100 bg-blue-50/50 p-5">
@@ -504,7 +513,7 @@ export default function ReviewClient({
                 </div>
               ) : (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-800">
-                  这次提交只保存了答案，还没有请求 AI 判分。你之后可以回到答题页，再选择“AI 判分并给建议”。
+                  {t("savedOnlyNoAiNote")}
                 </div>
               )}
             </div>

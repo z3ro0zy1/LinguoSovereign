@@ -45,3 +45,19 @@ Then open `http://localhost:3000`.
 - Writing / Speaking require login before entering the eval page
 - `/review/[id]` = pure reference page
 - `/review/[id]?submissionId=...` = attempt review page
+
+## Large Practice Assets
+
+This repository does **not** include the full `public/` practice asset bundle.
+
+Why:
+
+- the listening audio set and related media are large
+- Git is a poor fit for long-term storage of large binary assets
+- keeping them out of the main repo makes clone, pull, and push much lighter
+
+If you want to run the full experience locally, read the asset setup instructions in:
+
+- [English asset notes](./docs/README.en.md#asset-distribution-and-local-setup)
+- [中文资源说明](./docs/README.zh-CN.md#资源分发与本地放置方式)
+

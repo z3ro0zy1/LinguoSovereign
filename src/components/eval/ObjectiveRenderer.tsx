@@ -24,6 +24,7 @@ import {
 import parse, { HTMLReactParserOptions } from "html-react-parser"; // HTML 字符串转 React 组件的工具
 import { saveUnitState, getUnitState, clearUnitState } from "@/lib/testSession"; // 本地存档工具
 import { resolveAudioUrl } from "@/lib/utils";
+import { useLocale } from "@/components/LocaleProvider";
 /* 引入具体的子功能组件 */
 import { QuestionNavigatorPortal } from "./objective/QuestionNavigatorPortal"; // 底部题号导航（传送门技术）
 import { ObjectiveQuestionCard } from "./objective/ObjectiveQuestionCard"; // 单个题目卡片
@@ -44,6 +45,7 @@ export default function ObjectiveRenderer({
   isLastPart, // 是否是模考流的最后一部分
   allFlowIds, // 模考流中的所有题目 ID
 }: any) {
+  const { t } = useLocale();
   // 判断是听力还是阅读（听力通常标题带 Part，阅读带 Passage）
   const isListening =
     unit.title.includes("Part") || unit.title.includes("听力");
@@ -413,7 +415,7 @@ export default function ObjectiveRenderer({
     }
 
     if (hasEmpty) {
-      const confirm = window.confirm("您还有未作答的题目，确定要全部提交吗？");
+      const confirm = window.confirm(t("submitWithBlanksConfirm"));
       if (!confirm) return;
     }
 
@@ -451,7 +453,7 @@ export default function ObjectiveRenderer({
         }
       }
     } catch (error) {
-      console.error("提交失败:", error);
+      console.error(t("requestFailed"), error);
       setIsActive(true);
     }
     setLoading(false);
@@ -485,7 +487,7 @@ export default function ObjectiveRenderer({
               {...domNode.attribs}
               src={src}
               className="max-w-full h-auto my-4 rounded shadow-sm mx-auto"
-              alt="题目配图"
+              alt={t("questionImage") || "Question Illustration"}
             />
           );
         }
@@ -541,7 +543,7 @@ export default function ObjectiveRenderer({
                       resultElem = (
                         <span className="inline-flex items-center gap-1 ml-1 text-xs text-red-600 font-bold bg-red-100 px-2 py-0.5 rounded">
                           <XCircle className="w-3 h-3" />
-                          正确答案:{" "}
+                          {t("correctAnswer")}: {" "}
                           {String(subRes.officialAnswer).split(";")[0]}
                         </span>
                       );
@@ -591,7 +593,7 @@ export default function ObjectiveRenderer({
           </span>
           {!isListening && (
             <span className="text-sm text-gray-400 ml-2 hidden sm:inline">
-              (建议剩余)
+              ({t("recommendedRemaining")})
             </span>
           )}
         </div>
@@ -626,7 +628,7 @@ export default function ObjectiveRenderer({
           {result ? (
             // 如果已出分，显示总分
             <div className="px-4 py-2 bg-green-100 text-green-800 rounded-xl font-bold border border-green-200 shadow-sm">
-              得分: {result.summary.totalCorrect} /{" "}
+              {t("score")}: {result.summary.totalCorrect} /{" "}
               {result.summary.totalObjective}
             </div>
           ) : isLastPart ? (
@@ -637,12 +639,12 @@ export default function ObjectiveRenderer({
               size="default"
               className="shadow-md rounded-xl bg-gray-900 hover:bg-gray-800 font-bold px-6"
             >
-              {loading ? "提交中..." : "全卷提交"}
+              {loading ? t("submitting") : t("fullSubmit")}
             </Button>
           ) : (
             // 否则显示“进行中”状态
             <div className="text-gray-500 font-medium mr-2 text-sm mt-1 animate-pulse flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>答题中
+              <div className="w-2 h-2 bg-green-500 rounded-full"></div>{t("answeringInProgress")}
             </div>
           )}
         </div>
@@ -671,8 +673,8 @@ export default function ObjectiveRenderer({
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-sm uppercase tracking-wider text-gray-400 font-bold">
               {isListening
-                ? "听力音频与原文 (Listening)"
-                : "阅读文章 (Reading Material)"}
+                ? t("listeningAudioTranscript")
+                : t("readingMaterial")}
             </h2>
             {/* 听力题出完分后，允许切换显示原文 */}
             {isListening && result && (
@@ -681,7 +683,7 @@ export default function ObjectiveRenderer({
                 size="sm"
                 onClick={() => setShowTranscript(!showTranscript)}
               >
-                {showTranscript ? "隐藏原文" : "查看原文"}
+                {showTranscript ? t("hideTranscript") : t("showTranscript")}
               </Button>
             )}
           </div>
@@ -696,7 +698,7 @@ export default function ObjectiveRenderer({
                 className="h-10 w-full"
                 src={resolveAudioUrl(unit.audioUrl)}
               >
-                您的浏览器不支持音频播放。
+                {t("audioUnsupported")}
               </audio>
             </div>
           )}
@@ -712,19 +714,19 @@ export default function ObjectiveRenderer({
               // 听力过程中：隐藏原文，防止作弊
               <div className="flex flex-col items-center justify-center p-12 text-center text-gray-500 h-64 bg-gray-50 rounded-xl border border-dashed border-gray-200">
                 <Headphones className="w-12 h-12 mb-4 text-gray-300" />
-                <p>听力测试期间，原文已隐藏</p>
-                <p className="text-sm mt-2">请专注听录音内容</p>
+                <p>{t("transcriptHiddenDuringListening")}</p>
+                <p className="text-sm mt-2">{t("focusOnAudio")}</p>
               </div>
             ) : isListening && result && !showTranscript ? (
               // 出分后：默认也先隐藏原文，点按钮才看
               <div className="flex flex-col items-center justify-center p-12 text-center text-gray-500 h-64 bg-gray-50 rounded-xl border border-dashed border-gray-200">
-                <p>听力文本默认隐藏</p>
+                <p>{t("transcriptCollapsed")}</p>
                 <Button
                   variant="ghost"
                   className="mt-4"
                   onClick={() => setShowTranscript(true)}
                 >
-                  点击展开原文进行精听
+                  {t("clickToExpandTranscript")}
                 </Button>
               </div>
             ) : (
@@ -754,7 +756,7 @@ export default function ObjectiveRenderer({
                   className="h-8 px-2 gap-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-xl font-semibold"
                   onClick={() => applyHighlight("bg-blue-200/70")}
                 >
-                  <Highlighter className="w-4 h-4" /> <span>蓝划线</span>
+                  <Highlighter className="w-4 h-4" /> <span>{t("blueHighlight")}</span>
                 </Button>
                 <div className="w-px h-5 bg-gray-200 mx-1"></div>
                 <Button
@@ -763,7 +765,7 @@ export default function ObjectiveRenderer({
                   className="h-8 px-2 gap-2 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50 rounded-xl font-semibold"
                   onClick={() => applyHighlight("bg-yellow-200/70")}
                 >
-                  <Highlighter className="w-4 h-4" /> <span>黄划线</span>
+                  <Highlighter className="w-4 h-4" /> <span>{t("yellowHighlight")}</span>
                 </Button>
                 <div className="w-px h-5 bg-gray-200 mx-1"></div>
                 <Button
@@ -772,7 +774,7 @@ export default function ObjectiveRenderer({
                   className="h-8 px-2 gap-2 text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-xl font-semibold"
                   onClick={clearSelection}
                 >
-                  <Eraser className="w-4 h-4" /> <span>取消</span>
+                  <Eraser className="w-4 h-4" /> <span>{t("cancel")}</span>
                 </Button>
               </div>
             )}

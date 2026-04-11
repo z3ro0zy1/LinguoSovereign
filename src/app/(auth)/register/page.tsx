@@ -5,9 +5,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { KeyRound, Mail, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { LanguageToggle } from "@/components/LanguageToggle";
+import { useLocale } from "@/components/LocaleProvider";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { t } = useLocale();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -28,7 +31,7 @@ export default function RegisterPage() {
       const data = (await response.json()) as { error?: string };
 
       if (!response.ok) {
-        setError(data.error || "注册失败");
+        setError(data.error || t("registerFailed"));
         setLoading(false);
         return;
       }
@@ -36,7 +39,7 @@ export default function RegisterPage() {
       router.push("/login?registered=true");
     } catch (error) {
       console.error(error);
-      setError("网络错误，请稍后重试。");
+      setError(t("networkErrorRetry"));
       setLoading(false);
     }
   };
@@ -44,19 +47,20 @@ export default function RegisterPage() {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#edf2f7] px-6 py-12 text-slate-900">
       <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top_right,_rgba(56,189,248,0.18),_transparent_32%),radial-gradient(circle_at_10%_80%,_rgba(16,185,129,0.18),_transparent_28%),linear-gradient(180deg,#f8fafc_0%,#eef2f7_100%)]" />
+      <div className="absolute right-6 top-6 z-10"><LanguageToggle /></div>
       <div className="grid w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/70 bg-white/78 shadow-[0_30px_80px_rgba(15,23,42,0.1)] backdrop-blur-2xl lg:grid-cols-[1fr_460px]">
         <div className="hidden border-r border-white/70 bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 p-10 text-white lg:block">
-          <p className="text-xs font-bold uppercase tracking-[0.24em] text-white/55">Candidate Onboarding</p>
-          <h1 className="mt-5 text-5xl font-black leading-tight">创建账户，然后把训练、评分和复盘放进同一条路径。</h1>
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-white/55">{t("candidateOnboarding")}</p>
+          <h1 className="mt-5 text-5xl font-black leading-tight">{t("registerHeroTitle")}</h1>
           <div className="mt-10 space-y-4 text-sm leading-7 text-white/72">
             <div className="rounded-[1.4rem] border border-white/10 bg-white/5 p-4">
-              账号创建后即可使用阅读、听力、写作、口语四大模块。
+{t("registerTip1")}
             </div>
             <div className="rounded-[1.4rem] border border-white/10 bg-white/5 p-4">
-              历史成绩与模考记录会绑定到你的账户，方便连续复盘。
+{t("registerTip2")}
             </div>
             <div className="rounded-[1.4rem] border border-white/10 bg-white/5 p-4">
-              注册完成会自动跳到登录页，并带上成功提示。
+{t("registerTip3")}
             </div>
           </div>
         </div>
@@ -67,8 +71,8 @@ export default function RegisterPage() {
               LS
             </div>
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">Create Account</p>
-              <h2 className="text-lg font-black text-slate-900">加入 LinguoSovereign</h2>
+              <p className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">{t("createAccount")}</p>
+              <h2 className="text-lg font-black text-slate-900">{t("joinApp")}</h2>
             </div>
           </div>
 
@@ -81,7 +85,7 @@ export default function RegisterPage() {
           <form onSubmit={handleSubmit} className="mt-8 space-y-5">
             <label className="block space-y-2">
               <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-                <User className="h-4 w-4" /> 昵称
+                <User className="h-4 w-4" /> {t("nickname")}
               </span>
               <input
                 type="text"
@@ -95,7 +99,7 @@ export default function RegisterPage() {
 
             <label className="block space-y-2">
               <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-                <Mail className="h-4 w-4" /> 邮箱地址
+                <Mail className="h-4 w-4" /> {t("emailAddress")}
               </span>
               <input
                 type="email"
@@ -109,7 +113,7 @@ export default function RegisterPage() {
 
             <label className="block space-y-2">
               <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-                <KeyRound className="h-4 w-4" /> 密码
+                <KeyRound className="h-4 w-4" /> {t("newPassword")}
               </span>
               <input
                 type="password"
@@ -117,20 +121,20 @@ export default function RegisterPage() {
                 onChange={(event) => setPassword(event.target.value)}
                 required
                 minLength={6}
-                placeholder="至少 6 位"
+                placeholder={t("atLeast6")}
                 className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 font-medium text-slate-900 outline-none transition-all focus:border-sky-400 focus:ring-4 focus:ring-sky-400/15"
               />
             </label>
 
             <Button type="submit" disabled={loading} className="h-14 w-full rounded-2xl bg-slate-900 text-base font-bold text-white hover:bg-slate-800">
-              {loading ? "注册中..." : "创建账户"}
+              {loading ? t("registering") : t("createAccount")}
             </Button>
           </form>
 
           <p className="mt-8 text-sm font-medium text-slate-500">
-            已有账号？
+            {t("existingAccount")}
             <Link href="/login" className="ml-2 font-bold text-sky-600 hover:text-sky-700">
-              返回登录
+              {t("returnToLogin")}
             </Link>
           </p>
         </div>

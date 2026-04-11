@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import parse from "html-react-parser";
-import { Mic } from "lucide-react";
+import { ChevronDown, Mic, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { imageFixingOptions } from "./objective/shared";
 import { SpeakingAiRenderer } from "./SpeakingAiRenderer";
+import { useLocale } from "@/components/LocaleProvider";
 import {
   EMPTY_UNIT_STATE,
   clearUnitState,
@@ -99,6 +100,13 @@ type SubjectiveRendererProps = {
   allFlowIds: string[]; // 套卷里所有环节的 ID（用于一次性全部提交）
 };
 
+type PromptRecord = {
+  id: string;
+  name: string;
+  content: string;
+  isDefault: boolean;
+};
+
 // --- 辅助工具函数 (Helper Functions) ---
 
 /**
@@ -131,6 +139,17 @@ function getOverallBand(evaluation: SubjectiveEvaluation | null) {
     dimensionValues.length;
   // 雅思规则：取平均值后，最接近的 0.5 刻度
   return Math.round(average * 2) / 2;
+}
+
+function getSubjectiveDimensions(
+  evaluation: SubjectiveEvaluation | null,
+  isWriting: boolean,
+) {
+  const preferred = isWriting ? ["TR", "CC", "LR", "GRA"] : ["FC", "LR", "GRA", "P"];
+  const available = Object.keys(evaluation?.aiEvaluation?.dimensions || {});
+  return preferred.filter((dimension) => available.includes(dimension)).length
+    ? preferred
+    : available;
 }
 
 /**
@@ -268,13 +287,23 @@ export default function SubjectiveRenderer({
   allFlowIds,
 }: SubjectiveRendererProps) {
   // --- 状态管理 (State) ---
+  const { t } = useLocale();
   const [currentStep, setCurrentStep] = useState(0); // 当前进行到第几小题（Part 1, 2, 3...）
   const [answers, setAnswers] = useState<Record<string, string>>({}); // 用户的答案，键是题目ID，值是输入的文字
   const [loading, setLoading] = useState(false); // 提交时的加载状态
   const [submitError, setSubmitError] = useState(""); // 提交失败后的错误提示
   const [dismissedRestorePrompt, setDismissedRestorePrompt] = useState(false); // 用户是否已经关掉了“恢复进度”提示
   const [isRecording, setIsRecording] = useState(false); // 是否正在录音 (口语题专用)
+  const [promptId, setPromptId] = useState<string | null>(null);
+  const [promptName, setPromptName] = useState("");
+  const [promptContent, setPromptContent] = useState("");
+  const [defaultPromptContent, setDefaultPromptContent] = useState("");
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(false);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null); // 保存语音识别对象的引用
+  const isSpeakingTranscript = !isWriting && mode !== "ai";
+  // 同一个 UserPrompt 表里通过 purpose 区分“写作评分”和“口语转录评分”。
+  const promptPurpose = isWriting ? "evaluation" : "transcript_eval";
 
   const storedState = useMemo<StoredUnitState>(() => {
     if (typeof window === "undefined") return EMPTY_UNIT_STATE;
@@ -333,6 +362,54 @@ export default function SubjectiveRenderer({
     }
   }, [restorePreferenceKey, storedState, unit.id]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    // 页面加载时拉取当前模式的默认 prompt。
+    // 前端只取第一条（默认 prompt 优先），用户随后可以直接在 textarea 中改写。
+    const loadPrompt = async () => {
+      setPromptLoading(true);
+      try {
+        const response = await fetch(
+          `/api/prompts?category=${encodeURIComponent(unit.category)}&purpose=${encodeURIComponent(promptPurpose)}`,
+        );
+        const json = (await response.json()) as {
+          data?: PromptRecord[];
+        };
+
+        if (!response.ok) {
+          throw new Error("prompt-load-failed");
+        }
+
+        const selected = json.data?.[0];
+        if (cancelled) return;
+
+        setPromptId(selected?.id || null);
+        setPromptName(selected?.name || t("promptFallbackName"));
+        setPromptContent(selected?.content || "");
+        setDefaultPromptContent(selected?.content || "");
+      } catch (error) {
+        if (cancelled) return;
+        console.error(error);
+        setPromptId(null);
+        setPromptName(t("promptFallbackName"));
+        setPromptContent("");
+        setDefaultPromptContent("");
+        setSubmitError(t("promptLoadFailed"));
+      } finally {
+        if (!cancelled) {
+          setPromptLoading(false);
+        }
+      }
+    };
+
+    void loadPrompt();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [promptPurpose, t, unit.category]);
+
   /**
    * 功能：初始化浏览器语音识别
    */
@@ -362,12 +439,17 @@ export default function SubjectiveRenderer({
    * 自动保存：每当答案变化，实时同步到本地 localStorage
    */
   useEffect(() => {
+    // 口语转录模式现在按“逐题作答、统一提交”实现，
+    // 因此本地草稿仍按每一道题的 question.id 分开保存。
     const reqIds = unit.questions.map((question) => question.id);
     saveUnitState(unit.id, unit.category, reqIds, answers, 0);
   }, [answers, unit.category, unit.id, unit.questions]);
 
   const questions = unit.questions ?? [];
   const currentQuestion = questions[currentStep];
+  const allSpeakingQuestionsAnswered =
+    isSpeakingTranscript &&
+    questions.every((question) => (answers[question.id] || "").trim().length > 0);
 
   const handleRestoreState = () => {
     setAnswers(hydrateAnswersFromState(storedState));
@@ -383,11 +465,23 @@ export default function SubjectiveRenderer({
   };
 
   /**
-   * 功能：全卷打包提交 (Submission Logic)
-   * 作用：收集之前所有 Part 的答案，一次性发给 API 进行评估。
+   * 功能：统一提交主观题答案
+   * 作用：
+   * 1. 收集当前流程里的主观题答案
+   * 2. 把前端当前编辑的 prompt 一起带给后端
+   * 3. 后端优先使用 promptContent，而不是数据库默认版本
    */
   const handleSubmitAll = async (mode: "save" | "ai") => {
     if (!allFlowIds.length) return;
+
+    /**
+     * 口语转录评分现在按“所有 Part 都写完再统一评分”执行。
+     * 这里先在前端做一次硬性拦截，避免用户绕过按钮 disabled 状态。
+     */
+    if (isSpeakingTranscript && !allSpeakingQuestionsAnswered) {
+      setSubmitError(t("speakingCompleteAllParts"));
+      return;
+    }
 
     let hasEmpty = false; // 检查是否还有没写的题
     const submissions: BatchSubmission[] = [];
@@ -420,7 +514,11 @@ export default function SubjectiveRenderer({
       });
     }
 
-    if (hasEmpty && !window.confirm("您还有未作答的题目，确定要全部提交吗？")) {
+    /**
+     * 写作仍允许用户自行确认“带空提交”。
+     * 但口语转录模式已经在上方硬性要求全部写完，因此这里仅保留写作旧行为。
+     */
+    if (!isSpeakingTranscript && hasEmpty && !window.confirm(t("submitWithBlanksConfirm"))) {
       return;
     }
 
@@ -444,6 +542,9 @@ export default function SubjectiveRenderer({
               unitId: submission.unitId,
               userAnswers: submission.userAnswers,
               timeSpent: submission.timeSpent,
+              // promptId 用于记录“来源于哪条模板”，promptContent 用于真正执行本次评分。
+              promptId,
+              promptContent,
               useAi:
                 submission.category === "Writing" ||
                 submission.category === "Speaking"
@@ -459,7 +560,7 @@ export default function SubjectiveRenderer({
           };
 
           if (!response.ok) {
-            throw new Error(json.details || json.error || "请求失败");
+            throw new Error(json.details || json.error || t("requestFailed"));
           }
 
           return { unitId: submission.unitId, data: json.data };
@@ -476,7 +577,7 @@ export default function SubjectiveRenderer({
       setSubmitError(
         error instanceof Error
           ? error.message
-          : "AI evaluation request failed.",
+          : t("requestFailed"),
       );
     } finally {
       setLoading(false);
@@ -484,7 +585,7 @@ export default function SubjectiveRenderer({
   };
 
   if (!currentQuestion) {
-    return <div>No Questions Available</div>;
+    return <div>{t("noQuestionsAvailable")}</div>;
   }
 
   if (!isWriting && mode === "ai") {
@@ -497,6 +598,7 @@ export default function SubjectiveRenderer({
 
   const evaluation = (result ?? null) as SubjectiveEvaluation | null;
   const overallBand = getOverallBand(evaluation);
+  const dimensionKeys = getSubjectiveDimensions(evaluation, isWriting);
 
   return (
     <div className="flex flex-col gap-6">
@@ -509,10 +611,10 @@ export default function SubjectiveRenderer({
         <AlertDialogContent className="max-w-md rounded-3xl border-white/60 bg-white/90 backdrop-blur-xl">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-center text-lg text-gray-900">
-              检测到上次未完成的主观题进度
+              {t("restoreProgressTitle")}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-center text-sm text-gray-500">
-              你可以继续上次作答，也可以清空缓存重新开始。
+              {t("restoreProgressDesc")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex w-full flex-row gap-3 sm:justify-center">
@@ -521,13 +623,13 @@ export default function SubjectiveRenderer({
               className="flex-1"
               onClick={handleRestoreState}
             >
-              继续作答
+              {t("resume")}
             </Button>
             <Button
               className="flex-1 bg-gray-900 text-white hover:bg-gray-800"
               onClick={handleDiscardState}
             >
-              重新开始
+              {t("restart")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -542,7 +644,7 @@ export default function SubjectiveRenderer({
       {questions.length > 1 && (
         <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white/70 px-4 py-3 text-sm font-medium text-slate-600 backdrop-blur-sm">
           <span>
-            Part {currentStep + 1} / {questions.length}
+            {t("part")} {currentStep + 1} / {questions.length}
           </span>
           <div className="flex gap-2">
             <Button
@@ -550,14 +652,14 @@ export default function SubjectiveRenderer({
               disabled={currentStep === 0}
               onClick={() => setCurrentStep((step) => step - 1)}
             >
-              Prev
+              {t("previousQuestion")}
             </Button>
             <Button
               variant="ghost"
               disabled={currentStep === questions.length - 1}
               onClick={() => setCurrentStep((step) => step + 1)}
             >
-              Next
+              {t("nextQuestion")}
             </Button>
           </div>
         </div>
@@ -571,20 +673,65 @@ export default function SubjectiveRenderer({
             <div className="mb-6 flex items-center justify-between gap-4 border-b border-slate-100 pb-5">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">
-                  Prompt Surface
+                  {t("promptSurface")}
                 </p>
                 <h2 className="mt-2 text-2xl font-black text-slate-900">
-                  {isWriting ? "写作题面" : "口语题卡"}
+                  {isWriting
+                    ? t("writingPrompt")
+                    : t("speakingPromptBundle")}
                 </h2>
               </div>
               <div className="rounded-full border border-blue-100 bg-blue-50 px-4 py-1.5 text-xs font-bold text-blue-700">
-                {isWriting ? "Structured Writing" : "Live Speaking"}
+                {isWriting ? t("structuredWriting") : t("speakingTranscriptBadge")}
               </div>
             </div>
-            {/* 渲染具体的雅思题目要求 */}
-            <div className="prose max-w-none break-words text-[15px] leading-relaxed text-slate-700">
-              {parse(currentQuestion.stem || "", imageFixingOptions)}
-            </div>
+            {isSpeakingTranscript ? (
+              <div className="space-y-5">
+                {questions.map((question, index) => {
+                  const isActive = index === currentStep;
+                  const hasAnswer = Boolean(answers[question.id]?.trim());
+
+                  return (
+                    <button
+                      key={question.id}
+                      type="button"
+                      onClick={() => setCurrentStep(index)}
+                      className={`block w-full rounded-[1.6rem] border px-5 py-5 text-left transition-all ${
+                        isActive
+                          ? "border-slate-900 bg-slate-900 text-white shadow-[0_20px_40px_rgba(15,23,42,0.18)]"
+                          : "border-slate-200 bg-white/60 text-slate-800 hover:border-slate-300 hover:bg-white"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <p className={`text-xs font-bold uppercase tracking-[0.22em] ${isActive ? "text-slate-300" : "text-slate-400"}`}>
+                            {t("part")} {index + 1}
+                          </p>
+                          <div
+                            className={`prose mt-3 max-w-none text-[15px] leading-7 ${isActive ? "prose-invert text-white" : "text-slate-700"}`}
+                          >
+                            {parse(question.stem || "", imageFixingOptions)}
+                          </div>
+                        </div>
+                        <div className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${
+                          isActive
+                            ? "bg-white/10 text-white"
+                            : hasAnswer
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-slate-100 text-slate-500"
+                        }`}>
+                          {hasAnswer ? t("questionCompleted") : t("questionOpen")}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="prose max-w-none break-words text-[15px] leading-relaxed text-slate-700">
+                {parse(currentQuestion.stem || "", imageFixingOptions)}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -593,15 +740,14 @@ export default function SubjectiveRenderer({
             <CardContent className="flex h-full flex-col gap-6 p-8 lg:p-10">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-500">
-                  Submission Saved
+                  {t("submissionSaved")}
                 </p>
                 <h3 className="mt-2 text-2xl font-black text-slate-900">
-                  已保存当前答案，尚未请求 AI 判分
+{t("submissionSaved")}
                 </h3>
               </div>
               <div className="rounded-[1.5rem] border border-white/80 bg-white/90 p-6 text-[15px] leading-relaxed text-slate-700 shadow-sm">
-                这次提交只会把你的答案保存到服务器，不会调用 AI
-                生成分数和建议。你可以稍后返回本题，再选择“AI 判分并给建议”。
+{t("saveOnlySavedDesc")}
               </div>
             </CardContent>
           </Card>
@@ -610,16 +756,16 @@ export default function SubjectiveRenderer({
             <CardContent className="flex h-full flex-col gap-6 p-8 lg:p-10">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-blue-500">
-                  AI Feedback
+                  {t("aiFeedback")}
                 </p>
                 <h3 className="mt-2 text-2xl font-black text-slate-900">
-                  已生成本题型评估结果
+                  {t("evaluationReady")}
                 </h3>
               </div>
               <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
                 <div className="rounded-2xl border border-blue-200 bg-blue-600 p-4 text-center shadow-sm xl:col-span-1">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-100">
-                    Overall Band
+                    {t("overallBand")}
                   </p>
                   <p className="mt-2 text-3xl font-black text-white">
                     {overallBand !== null
@@ -627,7 +773,7 @@ export default function SubjectiveRenderer({
                       : "N/A"}
                   </p>
                 </div>
-                {["TR", "CC", "LR", "GRA"].map((dimension) => (
+                {dimensionKeys.map((dimension) => (
                   <div
                     key={dimension}
                     className="rounded-2xl border border-white/80 bg-white/90 p-4 text-center shadow-sm"
@@ -657,14 +803,91 @@ export default function SubjectiveRenderer({
           </Card>
         ) : (
           <div className="flex flex-col gap-4">
+            <button
+              type="button"
+              onClick={() => setPromptExpanded((value) => !value)}
+              className="flex items-center justify-between rounded-[1.6rem] border border-slate-200 bg-white/75 px-5 py-4 text-left shadow-[0_12px_30px_rgba(15,23,42,0.05)] transition-all hover:border-slate-300 hover:bg-white"
+            >
+              <div className="flex items-center gap-4">
+                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                  <SlidersHorizontal className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                    {t("promptWorkbench")}
+                  </p>
+                  <p className="mt-1 text-base font-semibold text-slate-900">
+                    {promptName || t("promptFallbackName")}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                  {promptLoading
+                    ? t("promptLoading")
+                    : promptExpanded
+                      ? t("promptClose")
+                      : t("promptOpen")}
+                </div>
+                <ChevronDown
+                  className={`h-4 w-4 text-slate-500 transition-transform ${
+                    promptExpanded ? "rotate-180" : ""
+                  }`}
+                />
+              </div>
+            </button>
+
+            {promptExpanded ? (
+              <div className="overflow-hidden rounded-[2rem] border border-black/5 bg-[linear-gradient(180deg,rgba(248,250,252,0.95),rgba(255,255,255,0.92))] shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+                <div className="grid gap-0 lg:grid-cols-[0.9fr_1.1fr]">
+                  <div className="border-b border-black/5 px-6 py-6 lg:border-b-0 lg:border-r">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.26em] text-slate-400">
+                      {t("promptWorkbench")}
+                    </p>
+                    <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-900">
+                      {promptName || t("promptFallbackName")}
+                    </h3>
+                    <p className="mt-3 max-w-md text-sm leading-7 text-slate-600">
+                      {t("promptWorkbenchHint")}
+                    </p>
+                    <div className="mt-6 flex flex-wrap gap-3">
+                      <div className="rounded-full border border-black/5 bg-white px-4 py-2 text-xs font-semibold text-slate-600">
+                        {promptLoading ? t("promptLoading") : t("promptName")}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        className="rounded-full px-4"
+                        onClick={() => setPromptContent(defaultPromptContent)}
+                        disabled={promptLoading}
+                      >
+                        {t("promptRefresh")}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="px-6 py-6">
+                    <label className="text-[11px] font-bold uppercase tracking-[0.26em] text-slate-400">
+                      {t("promptEditorLabel")}
+                    </label>
+                    <textarea
+                      className="mt-4 min-h-[210px] w-full resize-none border-0 bg-transparent p-0 font-mono text-[13px] leading-7 text-slate-700 outline-none"
+                      placeholder={t("promptEmpty")}
+                      value={promptContent}
+                      onChange={(event) => setPromptContent(event.target.value)}
+                      spellCheck={false}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-[0_25px_70px_rgba(15,23,42,0.06)] backdrop-blur-xl">
               <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 pb-4">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">
-                    Response Studio
+                    {t("responseStudio")}
                   </p>
                   <h3 className="mt-2 text-2xl font-black text-slate-900">
-                    {isWriting ? "撰写你的答卷" : "记录你的回答"}
+                    {isWriting ? t("writingResponse") : t("speakingResponseTitle")}
                   </h3>
                 </div>
                 <div className="flex items-center gap-3">
@@ -684,7 +907,7 @@ export default function SubjectiveRenderer({
                         const recognition = recognitionRef.current;
                         if (!recognition) {
                           window.alert(
-                            "Your browser does not support speech recognition. Please use Chrome or Edge.",
+                            t("browserNoSpeech"),
                           );
                           return;
                         }
@@ -728,19 +951,33 @@ export default function SubjectiveRenderer({
                       <Mic
                         className={`mr-2 h-4 w-4 ${isRecording ? "animate-pulse text-white" : ""}`}
                       />
-                      {isRecording ? "Stop Recording" : "Start Recording"}
+                      {isRecording
+                        ? t("speakingStopRecording")
+                        : t("speakingStartRecording")}
                     </Button>
                   )}
                 </div>
               </div>
+
+              {!isWriting ? (
+            <div className="mt-5 rounded-[1.5rem] border border-blue-100 bg-blue-50/70 p-5 text-sm leading-7 text-slate-700">
+                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-500">
+                    {t("speakingTranscriptLabel")}
+                  </p>
+                  <p className="mt-2">{t("speakingTranscriptHint")}</p>
+                  <p className="mt-2 text-blue-700">
+                    {t("speakingCompleteAllPartsHint")}
+                  </p>
+                </div>
+              ) : null}
 
               {/* 大型文本编辑区 */}
               <textarea
                 className="mt-5 min-h-[520px] w-full resize-none rounded-[1.5rem] border-2 border-slate-200 bg-slate-50/80 p-6 text-base leading-relaxed text-slate-900 shadow-inner outline-none transition-all focus:border-blue-500 focus:ring-4 focus:ring-blue-500/15"
                 placeholder={
                   isWriting
-                    ? "请用英文开始撰写你的文章..."
-                    : "点击“开始录音”按钮口述你的答案，或者直接手动输入..."
+                    ? "Write your response in English..."
+                    : t("speakingTranscriptPlaceholder")
                 }
                 spellCheck={false}
                 value={answers[currentQuestion.id] || ""}
@@ -763,35 +1000,46 @@ export default function SubjectiveRenderer({
                   className="rounded-full px-6"
                   onClick={() => setCurrentStep((step) => step + 1)}
                 >
-                  继续完成 Part {currentStep + 2}
+                  {`${t("nextQuestion")} Part ${currentStep + 2}`}
                 </Button>
               ) : isLastPart ? (
                 // 如果是最后一部分，显示最终提交按钮
                 <div className="flex flex-wrap justify-end gap-3">
-                  <Button
-                    size="lg"
-                    variant="outline"
-                    className="rounded-full px-6"
-                    onClick={() => void handleSubmitAll("save")}
-                    disabled={loading}
-                    title="仅保存，不扣除 AI 额度"
-                  >
-                    {loading ? "提交中..." : "仅保存草稿"}
-                  </Button>
+                  {isWriting ? (
+                    <Button
+                      size="lg"
+                      variant="outline"
+                      className="rounded-full px-6"
+                      onClick={() => void handleSubmitAll("save")}
+                      disabled={loading}
+                      title={t("normalSubmit")}
+                    >
+                      {loading ? t("submitting") : t("normalSubmit")}
+                    </Button>
+                  ) : null}
                   <Button
                     size="lg"
                     className="rounded-full bg-gray-900 px-8 text-white shadow-lg hover:bg-gray-800"
                     onClick={() => void handleSubmitAll("ai")}
-                    disabled={loading}
+                    disabled={loading || (isSpeakingTranscript && !allSpeakingQuestionsAnswered)}
+                    title={
+                      isSpeakingTranscript && !allSpeakingQuestionsAnswered
+                        ? t("speakingCompleteAllParts")
+                        : undefined
+                    }
                   >
-                    {loading ? "AI 判分中..." : "AI 精准判分"}
+                    {loading
+                      ? t("submitting")
+                      : isWriting
+                        ? t("aiEvaluate")
+                        : t("speakingTranscriptTitle")}
                   </Button>
                 </div>
               ) : (
                 // 自动保存状态展示
                 <div className="flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
                   <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                  已自动同步到草稿箱
+                  Draft synced automatically
                 </div>
               )}
             </div>

@@ -17,6 +17,9 @@ import { ArrowLeft, Clock, Target, Activity, BrainCircuit } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatIELTSTitle } from "@/lib/utils";
+import { LanguageToggle } from "@/components/LanguageToggle";
+import { useLocale } from "@/components/LocaleProvider";
+import { getCategoryLabel } from "@/lib/i18n";
 
 type AnalyticsRecord = {
   id: string;
@@ -56,6 +59,7 @@ const EMPTY_DATA: AnalyticsData = {
 export default function AnalyticsDashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { locale, t } = useLocale();
   const [data, setData] = useState<AnalyticsData>(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
 
@@ -69,7 +73,11 @@ export default function AnalyticsDashboard() {
       fetch("/api/analytics")
         .then((res) => res.json())
         .then((json: Partial<AnalyticsData>) => {
-          setData({ ...EMPTY_DATA, ...json, averageScores: { ...EMPTY_DATA.averageScores, ...json.averageScores } });
+          setData({
+            ...EMPTY_DATA,
+            ...json,
+            averageScores: { ...EMPTY_DATA.averageScores, ...json.averageScores },
+          });
           setLoading(false);
         });
     }
@@ -93,33 +101,34 @@ export default function AnalyticsDashboard() {
       </div>
 
       <div className="mx-auto max-w-6xl">
-        <div className="mb-10 flex items-center justify-between">
+        <div className="mb-10 flex items-center justify-between gap-4">
           <div>
             <Link href="/">
               <Button variant="ghost" className="-ml-4 mb-4 text-gray-500 hover:bg-black/5 hover:text-gray-900">
                 <ArrowLeft className="mr-2 h-4 w-4" />
-                返回主页
+                {t("backToHome")}
               </Button>
             </Link>
             <h1 className="bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-4xl font-black tracking-tight text-transparent">
-              数据控制台
+              {t("analyticsTitle")}
             </h1>
             <p className="mt-1 font-medium text-gray-500">
-              Hello, {session?.user?.name || session?.user?.email} · 你的 AI 备考报告
+              Hello, {session?.user?.name || session?.user?.email} · {t("analyticsSubtitle")}
             </p>
           </div>
+          <LanguageToggle />
         </div>
 
         <div className="mb-10 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          <StatMetricCard title="总练习次数" value={totalTests} icon={<Activity className="h-5 w-5" />} color="text-blue-600" />
-          <StatMetricCard title="专注时长" value={`${Math.round(totalTimeSpent / 60)} 分钟`} icon={<Clock className="h-5 w-5" />} color="text-indigo-600" />
-          <StatMetricCard title="阅读估分" value={averageScores.Reading} icon={<Target className="h-5 w-5" />} color="text-emerald-600" subtitle="雅思标准(均分)" />
-          <StatMetricCard title="写作估分" value={averageScores.Writing} icon={<BrainCircuit className="h-5 w-5" />} color="text-purple-600" subtitle="AI 深度评估(均分)" />
+          <StatMetricCard title={t("totalTests")} value={totalTests} icon={<Activity className="h-5 w-5" />} color="text-blue-600" />
+          <StatMetricCard title={t("focusTime")} value={`${Math.round(totalTimeSpent / 60)} ${t("minutes")}`} icon={<Clock className="h-5 w-5" />} color="text-indigo-600" />
+          <StatMetricCard title={t("readingEstimate")} value={averageScores.Reading} icon={<Target className="h-5 w-5" />} color="text-emerald-600" subtitle={t("ieltsAverage")} />
+          <StatMetricCard title={t("writingEstimate")} value={averageScores.Writing} icon={<BrainCircuit className="h-5 w-5" />} color="text-purple-600" subtitle={t("aiAverage")} />
         </div>
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
           <div className="rounded-3xl border border-white/60 bg-white/60 p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] backdrop-blur-2xl">
-            <h3 className="mb-6 text-xl font-bold text-gray-900">成长轨迹 (最近测试)</h3>
+            <h3 className="mb-6 text-xl font-bold text-gray-900">{t("growthTrend")}</h3>
             <div className="mt-10 h-[300px] w-full">
               {timeline.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
@@ -129,41 +138,41 @@ export default function AnalyticsDashboard() {
                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: "#6B7280" }} dx={-10} domain={[0, 9]} tickCount={10} />
                     <Tooltip contentStyle={{ borderRadius: "1rem", border: "none", boxShadow: "0 10px 25px rgba(0,0,0,0.1)" }} />
                     <Legend wrapperStyle={{ paddingTop: "20px" }} />
-                    <Line type="monotone" dataKey="Reading" name="阅读" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
-                    <Line type="monotone" dataKey="Listening" name="听力" stroke="#6366f1" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
-                    <Line type="monotone" dataKey="Writing" name="写作" stroke="#a855f7" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
-                    <Line type="monotone" dataKey="Speaking" name="口语" stroke="#ec4899" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
+                    <Line type="monotone" dataKey="Reading" name={getCategoryLabel(locale, "Reading")} stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
+                    <Line type="monotone" dataKey="Listening" name={getCategoryLabel(locale, "Listening")} stroke="#6366f1" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
+                    <Line type="monotone" dataKey="Writing" name={getCategoryLabel(locale, "Writing")} stroke="#a855f7" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
+                    <Line type="monotone" dataKey="Speaking" name={getCategoryLabel(locale, "Speaking")} stroke="#ec4899" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="flex h-full items-center justify-center font-medium text-gray-400">暂无数据记录</div>
+                <div className="flex h-full items-center justify-center font-medium text-gray-400">{t("noData")}</div>
               )}
             </div>
           </div>
 
           <div className="flex flex-col justify-center rounded-3xl border border-white/60 bg-white/60 p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] backdrop-blur-2xl">
-            <h3 className="mb-6 text-xl font-bold text-gray-900">模考模块均分</h3>
+            <h3 className="mb-6 text-xl font-bold text-gray-900">{t("averageScoresByModule")}</h3>
             <div className="space-y-6">
-              <ProgressRow label="阅读 (Reading)" score={averageScores.Reading} total={9} color="bg-blue-500" />
-              <ProgressRow label="听力 (Listening)" score={averageScores.Listening} total={9} color="bg-indigo-500" />
-              <ProgressRow label="写作 (Writing)" score={averageScores.Writing} total={9} color="bg-purple-500" />
-              <ProgressRow label="口语 (Speaking)" score={averageScores.Speaking} total={9} color="bg-pink-500" />
+              <ProgressRow label={locale === "zh" ? "阅读 (Reading)" : "Reading"} score={averageScores.Reading} total={9} color="bg-blue-500" />
+              <ProgressRow label={locale === "zh" ? "听力 (Listening)" : "Listening"} score={averageScores.Listening} total={9} color="bg-indigo-500" />
+              <ProgressRow label={locale === "zh" ? "写作 (Writing)" : "Writing"} score={averageScores.Writing} total={9} color="bg-purple-500" />
+              <ProgressRow label={locale === "zh" ? "口语 (Speaking)" : "Speaking"} score={averageScores.Speaking} total={9} color="bg-pink-500" />
             </div>
           </div>
         </div>
 
         <div className="mb-10 mt-8 rounded-3xl border border-white/60 bg-white/60 p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] backdrop-blur-2xl">
-          <h3 className="mb-6 text-xl font-bold text-gray-900">详细练习记录</h3>
+          <h3 className="mb-6 text-xl font-bold text-gray-900">{t("detailedHistory")}</h3>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left">
               <thead>
                 <tr className="border-b border-gray-200 text-sm font-semibold uppercase tracking-wider text-gray-500">
-                  <th className="w-[180px] px-4 pb-3">交卷时间</th>
-                  <th className="w-[120px] px-4 pb-3">模块</th>
-                  <th className="px-4 pb-3">卷宗题目</th>
-                  <th className="w-[100px] px-4 pb-3 text-center">雅思估分</th>
-                  <th className="w-[120px] px-4 pb-3 text-center">耗时</th>
-                  <th className="w-[100px] px-4 pb-3 text-center">详情</th>
+                  <th className="w-[180px] px-4 pb-3">{t("submissionTime")}</th>
+                  <th className="w-[120px] px-4 pb-3">{t("module")}</th>
+                  <th className="px-4 pb-3">{t("testTitle")}</th>
+                  <th className="w-[100px] px-4 pb-3 text-center">{t("estimatedBand")}</th>
+                  <th className="w-[120px] px-4 pb-3 text-center">{t("duration")}</th>
+                  <th className="w-[100px] px-4 pb-3 text-center">{t("details")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 text-sm font-medium text-gray-700">
@@ -171,7 +180,7 @@ export default function AnalyticsDashboard() {
                   history.map((record) => (
                     <tr key={record.id} className="transition-colors hover:bg-white/50">
                       <td className="whitespace-nowrap px-4 py-4 text-gray-500">
-                        {new Date(record.date).toLocaleString("zh-CN", {
+                        {new Date(record.date).toLocaleString(locale === "zh" ? "zh-CN" : "en-US", {
                           month: "short",
                           day: "numeric",
                           hour: "2-digit",
@@ -190,13 +199,7 @@ export default function AnalyticsDashboard() {
                                   : "bg-pink-100 text-pink-700"
                           }`}
                         >
-                          {record.category === "Reading"
-                            ? "阅读"
-                            : record.category === "Listening"
-                              ? "听力"
-                              : record.category === "Writing"
-                                ? "写作"
-                                : "口语"}
+                          {getCategoryLabel(locale, record.category)}
                         </span>
                       </td>
                       <td className="max-w-[300px] truncate px-4 py-4 font-bold text-gray-900" title={formatIELTSTitle(record.unitTitle)}>
@@ -205,7 +208,7 @@ export default function AnalyticsDashboard() {
                       <td className="px-4 py-4 text-center text-base font-black text-gray-900">
                         {record.evaluated === false ? (
                           <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-sm font-bold text-amber-700">
-                            未评估
+                            {t("notEvaluated")}
                           </span>
                         ) : (
                           record.score
@@ -219,7 +222,7 @@ export default function AnalyticsDashboard() {
                           href={`/review/${record.unitId}?submissionId=${record.id}`}
                           className="inline-block rounded-lg bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-600 transition-colors hover:bg-blue-100 hover:text-blue-800"
                         >
-                          详解
+                          {t("explanation")}
                         </Link>
                       </td>
                     </tr>
@@ -227,7 +230,7 @@ export default function AnalyticsDashboard() {
                 ) : (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-gray-400">
-                      暂无考卷提交记录
+                      {t("noSubmissions")}
                     </td>
                   </tr>
                 )}
@@ -274,17 +277,15 @@ function ProgressRow({
   total: number;
   color: string;
 }) {
-  const percentage = Math.min(100, Math.max(0, (score / total) * 100));
+  const pct = Math.min((score / total) * 100, 100);
   return (
     <div>
-      <div className="mb-2 flex justify-between text-sm font-bold text-gray-700">
+      <div className="mb-2 flex justify-between text-sm font-semibold text-gray-700">
         <span>{label}</span>
-        <span>
-          {score} / {total}
-        </span>
+        <span>{score.toFixed(1)} / {total}</span>
       </div>
-      <div className="h-3 w-full overflow-hidden rounded-full border border-white/40 bg-white/50 shadow-inner">
-        <div className={`h-full rounded-full ${color} transition-all duration-1000`} style={{ width: `${percentage}%` }} />
+      <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
       </div>
     </div>
   );

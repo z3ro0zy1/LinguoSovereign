@@ -15,6 +15,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowRightIcon } from "lucide-react";
 import { formatIELTSTitle } from "@/lib/utils";
+import { LanguageToggle } from "@/components/LanguageToggle";
+import { useLocale } from "@/components/LocaleProvider";
+import { getCategoryLabel } from "@/lib/i18n";
 
 export default function EvalWrapper({
   unit, // 当前这一道题的详细数据
@@ -36,6 +39,7 @@ export default function EvalWrapper({
   subjectiveMode?: "standard" | "ai";
 }) {
   const router = useRouter(); // Next.js 的页面跳转工具
+  const { locale, t } = useLocale();
 
   /**
    * --- 提交结果状态管理 (Submission Result State) ---
@@ -79,6 +83,8 @@ export default function EvalWrapper({
   // 判定逻辑
   const isObjective = unit.category === "Reading/Listening"; // 是否属于“填空/选择”类
   const isWriting = unit.category === "Writing"; // 是否是写作
+  const isSpeakingFreeChat =
+    unit.category === "Speaking" && subjectiveMode === "ai";
 
   // --- 模考连考逻辑 (Full Test Navigation Logic) ---
   const currentIndex = allFlowIds.indexOf(unit.id); // 看看当前题在模考序列里排第几
@@ -96,9 +102,18 @@ export default function EvalWrapper({
       : "/dashboard/analytics";
 
   // 是否需要显示底部常驻工具条 (只要有多个兄弟题目或者在模考流中)
+  /**
+   * 自由对话模式不应该继承“模考壳子”的底部工具条：
+   * - 不需要 Part 切换
+   * - 不需要“继续进入下一模块”
+   * - 不需要“结束模考查看总报告”
+   *
+   * 它本质上是独立训练页，不是提交型作答页。
+   */
   const hasBottomDock =
-    (siblings && siblings.length > 1) ||
-    (submissionResult && flowSequence !== undefined);
+    !isSpeakingFreeChat &&
+    ((siblings && siblings.length > 1) ||
+      (submissionResult && flowSequence !== undefined));
 
   return (
     <div
@@ -108,11 +123,39 @@ export default function EvalWrapper({
       <header className="flex justify-between items-center border-b pb-4">
         <div>
           <h1 className="text-2xl font-bold">{formatIELTSTitle(unit.title)}</h1>
-          <p className="text-sm text-gray-500">分类: {unit.category}</p>
+          <p className="text-sm text-gray-500">{t("category")}: {getCategoryLabel(locale, unit.category)}</p>
+          {unit.category === "Speaking" ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-400">
+                {t("speakingModeSwitcher")}
+              </span>
+              <Link href={`/eval/${unit.id}`}>
+                <Button
+                  size="sm"
+                  variant={subjectiveMode === "standard" ? "default" : "outline"}
+                  className="rounded-full"
+                >
+                  {t("speakingTranscriptMode")}
+                </Button>
+              </Link>
+              <Link href={`/eval/${unit.id}?mode=ai`}>
+                <Button
+                  size="sm"
+                  variant={subjectiveMode === "ai" ? "default" : "outline"}
+                  className="rounded-full"
+                >
+                  {t("speakingFreeChatMode")}
+                </Button>
+              </Link>
+            </div>
+          ) : null}
         </div>
+        <div className="flex items-center gap-3">
+          <LanguageToggle />
         <Button variant="outline" onClick={() => router.push("/")}>
-          返回首页
+          {t("backToHome")}
         </Button>
+        </div>
       </header>
 
       {/**
@@ -144,8 +187,9 @@ export default function EvalWrapper({
        * --- 底部导航浮窗 (Bottom Navigation Bar) ---
        * 它会在屏幕底部固定显示，方便用户快速跳到下一篇阅读，或者在考完一门后连着考下一门。
        */}
-      {((siblings && siblings.length > 1) ||
-        (submissionResult && flowSequence !== undefined)) && (
+      {!isSpeakingFreeChat &&
+        ((siblings && siblings.length > 1) ||
+          (submissionResult && flowSequence !== undefined)) && (
         <div className="fixed bottom-0 left-0 w-full h-16 bg-[#ebf0f7] border-t border-gray-300 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] flex items-center justify-center z-50">
           <div className="flex items-center justify-between w-full max-w-[1600px] px-8">
             {/* 这里的 id="footer-left-slot" 是一个“挂载点”，
@@ -163,7 +207,7 @@ export default function EvalWrapper({
                   const formattedTitle = formatIELTSTitle(sib.title);
 
                   // 自动生成按钮文字（如果是第几篇/第几部分）
-                  let label = "Part " + (i + 1);
+                  let label = `${locale === "zh" ? "Part" : "Part"} ${i + 1}`;
                   const match = formattedTitle.match(
                     /(Passage \d|Part \d|Task \d)/i,
                   );

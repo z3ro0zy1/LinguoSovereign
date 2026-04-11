@@ -129,6 +129,87 @@ NEXTAUTH_URL=http://localhost:3000
 NEXTAUTH_SECRET=your-secret
 ```
 
+## Asset Distribution And Local Setup
+
+The repository is intentionally kept separate from the full practice asset bundle.
+
+### Why the full `public/` folder is not shipped in Git
+
+The project depends on large binary assets such as:
+
+- Listening `.mp3` files
+- Writing prompt images
+- Reading / listening supplementary images
+
+These files are necessary for the full product experience, but they are **not** ideal for the main Git repository because:
+
+- they make clone, fetch, pull, and push much slower
+- Git history grows very quickly when large binaries change
+- the repository becomes harder to maintain and distribute
+- some asset sets may require separate handling for ownership or redistribution reasons
+
+### Recommended distribution model
+
+Use a split delivery model:
+
+- the Git repository stores code, configuration templates, and documentation
+- the full asset package is distributed separately
+- developers download the asset package and place it into the expected local directory before running the app fully
+
+### Local expectation
+
+The app expects practice assets to be available under `public/`.
+Typical examples include:
+
+- `public/Cambridge IELTS_Listening.../*.mp3`
+- `public/images/...`
+
+If the full asset package is missing:
+
+- listening audio playback may fail
+- some question illustrations may not render
+- review pages may show missing media
+
+### Suggested onboarding steps for collaborators
+
+1. Clone the repository.
+2. Install dependencies.
+3. Copy `.env.example` to `.env` and fill it in.
+4. Obtain the separate practice asset bundle from the project maintainer.
+5. Extract or copy the asset bundle into the local `public/` directory.
+6. Run the app.
+
+Example:
+
+```bash
+npm install
+cp .env.example .env
+# then place the downloaded assets into ./public
+npm run dev
+```
+
+### What should and should not be committed
+
+Usually commit:
+
+- code under `src/`
+- Prisma schema and migrations
+- docs
+- small README screenshots or explanatory images
+- configuration templates such as `.env.example`
+
+Usually do **not** commit:
+
+- the full practice asset bundle under `public/`
+- large listening audio collections
+- local secrets in `.env`
+- build output such as `.next/`
+- dependency directories such as `node_modules/`
+
+### Recommended README / team rule
+
+If a new collaborator cannot play listening audio or cannot see some prompt images, first verify whether the local `public/` asset bundle has been downloaded and placed correctly.
+
 ## 6. Main Routes
 
 - `/`: dashboard home and module browser

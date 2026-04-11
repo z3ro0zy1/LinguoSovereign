@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+/**
+ * Prompt 现在不仅按题型区分，还按“用途/场景”区分。
+ *
+ * 例如：
+ * - category=Writing, purpose=evaluation
+ * - category=Speaking, purpose=transcript_eval
+ * - category=Speaking, purpose=free_chat
+ *
+ * 这样仍然复用一张 UserPrompt 表，不需要额外建新表。
+ */
 type PromptBody = {
   category?: string;
+  purpose?: string;
   name?: string;
   content?: string;
   isDefault?: boolean;
@@ -10,9 +21,14 @@ type PromptBody = {
 
 export async function GET(req: NextRequest) {
   try {
+    // 前端会按 category + purpose 拉当前模式下可用的 prompt 列表。
     const { searchParams } = new URL(req.url);
     const category = searchParams.get("category");
-    const whereClause = category ? { category } : {};
+    const purpose = searchParams.get("purpose");
+    const whereClause = {
+      ...(category ? { category } : {}),
+      ...(purpose ? { purpose } : {}),
+    };
 
     const prompts = await prisma.userPrompt.findMany({
       where: whereClause,
@@ -33,7 +49,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as PromptBody;
-    const { category, name, content, isDefault } = body;
+    const { category, purpose = "evaluation", name, content, isDefault } = body;
 
     if (!category || !name || !content) {
       return NextResponse.json(
@@ -43,8 +59,9 @@ export async function POST(req: NextRequest) {
     }
 
     if (isDefault) {
+      // 同一类 prompt 在同一用途下只能有一条默认记录。
       await prisma.userPrompt.updateMany({
-        where: { category },
+        where: { category, purpose },
         data: { isDefault: false },
       });
     }
@@ -52,6 +69,7 @@ export async function POST(req: NextRequest) {
     const newPrompt = await prisma.userPrompt.create({
       data: {
         category,
+        purpose,
         name,
         content,
         isDefault: Boolean(isDefault),
