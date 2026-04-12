@@ -66,7 +66,7 @@ LinguoSovereign 当前支持：
 ### 安装依赖
 
 ```bash
-npm install
+pnpm install
 ```
 
 ### 本地启动
@@ -75,7 +75,7 @@ npm install
 
 ```bash
 cp .env.example .env
-npm run dev
+pnpm dev
 ```
 
 打开：

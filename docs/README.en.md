@@ -66,7 +66,7 @@ LinguoSovereign currently supports:
 ### Install
 
 ```bash
-npm install
+pnpm install
 ```
 
 ### Start local services
@@ -75,7 +75,7 @@ Create `.env` from `.env.example`, then start the app:
 
 ```bash
 cp .env.example .env
-npm run dev
+pnpm dev
 ```
 
 Open:
@@ -96,15 +96,15 @@ npx tsx scripts/seed.ts
 
 ## 5. Environment Variables
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `NEXTAUTH_SECRET` | Yes | Session encryption secret |
-| `NEXTAUTH_URL` | Yes | Base URL in local/dev, usually `http://localhost:3000` |
-| `OPENAI_API_KEY` | Yes for AI features | Provider API key |
-| `OPENAI_BASE_URL` | Optional | OpenAI-compatible provider base URL |
-| `OPENAI_MODEL` | Yes for writing AI | Writing evaluation model |
-| `OPENAI_SPEAKING_MODEL` | Optional | Speaking AI conversation model |
+| Variable                | Required            | Purpose                                                |
+| ----------------------- | ------------------- | ------------------------------------------------------ |
+| `DATABASE_URL`          | Yes                 | PostgreSQL connection string                           |
+| `NEXTAUTH_SECRET`       | Yes                 | Session encryption secret                              |
+| `NEXTAUTH_URL`          | Yes                 | Base URL in local/dev, usually `http://localhost:3000` |
+| `OPENAI_API_KEY`        | Yes for AI features | Provider API key                                       |
+| `OPENAI_BASE_URL`       | Optional            | OpenAI-compatible provider base URL                    |
+| `OPENAI_MODEL`          | Yes for writing AI  | Writing evaluation model                               |
+| `OPENAI_SPEAKING_MODEL` | Optional            | Speaking AI conversation model                         |
 
 ### Minimum example
 
