@@ -40,10 +40,20 @@ type GeminiLiveTokenRequest = {
 };
 
 function getOpenAiApiKey() {
-  const apiKey = process.env.OPENAI_API_KEY;
+  /**
+   * 主观题评分统一走 OpenAI-compatible 协议。
+   * 这样同一套客户端可以无缝切换：
+   * - OpenAI
+   * - Moonshot / Kimi
+   * - Zhipu GLM4
+   *
+   * 预留 GLM4 的方式不是再起一套 SDK，
+   * 而是直接兼容它的 API Key / Base URL / Model 环境变量。
+   */
+  const apiKey = process.env.OPENAI_API_KEY || process.env.GLM_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "AI 服务未配置。请在 .env 文件中设置 OPENAI_API_KEY 以开启写作自动评分功能。",
+      "AI 服务未配置。请在 .env 文件中设置 OPENAI_API_KEY 或 GLM_API_KEY 以开启主观题评分功能。",
     );
   }
   return apiKey;
@@ -128,16 +138,39 @@ async function fetchGemini(path: string, body: object, isStreaming = false) {
 export function getAiClient() {
   return new OpenAI({
     apiKey: getOpenAiApiKey(),
-    baseURL: process.env.OPENAI_BASE_URL || undefined,
+    baseURL:
+      process.env.OPENAI_BASE_URL ||
+      process.env.GLM_BASE_URL ||
+      undefined,
   });
 }
 
 export function getSubjectiveEvalModel() {
-  return process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+  return (
+    process.env.OPENAI_MODEL ||
+    process.env.GLM_MODEL ||
+    DEFAULT_OPENAI_MODEL
+  );
 }
 
 export function getSpeakingTranscriptEvalModel() {
-  return process.env.OPENAI_SPEAKING_EVAL_MODEL || getSubjectiveEvalModel();
+  return (
+    process.env.OPENAI_SPEAKING_EVAL_MODEL ||
+    process.env.GLM_SPEAKING_EVAL_MODEL ||
+    getSubjectiveEvalModel()
+  );
+}
+
+/**
+ * 阅读长难句分析和段落讲解可以独立切模型。
+ * 这样后面如果你觉得 GLM4 在语法拆解上更稳，不需要影响写作/口语评分链路。
+ */
+export function getReadingAnalysisModel() {
+  return (
+    process.env.OPENAI_READING_ANALYSIS_MODEL ||
+    process.env.GLM_READING_ANALYSIS_MODEL ||
+    getSubjectiveEvalModel()
+  );
 }
 
 export function getSpeakingConversationModel() {

@@ -1,0 +1,24 @@
+[Unit]
+Description=LinguoSovereign Next.js App
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/linguosovereign
+
+# 如果你把环境变量单独放在文件里，可以保留这一行；
+# 否则也可以直接在这里写 Environment=...
+EnvironmentFile=/var/www/linguosovereign/.env.production
+
+ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1 --port 3000
+Restart=always
+RestartSec=5
+
+# 生产环境建议保留独立日志，排查会轻松很多。
+StandardOutput=append:/var/log/linguosovereign/app.log
+StandardError=append:/var/log/linguosovereign/app-error.log
+
+[Install]
+WantedBy=multi-user.target

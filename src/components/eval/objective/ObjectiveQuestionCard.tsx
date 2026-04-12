@@ -4,6 +4,7 @@
  * 这个组件负责显示题目的序号、题干、选项，并在考试结束后显示正确答案和解析。
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { ReactNode } from "react";
 import { CornerDownRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,8 +28,114 @@ type ObjectiveSubResult = {
 
 type ObjectiveResult = {
   subResults?: ObjectiveSubResult[];
-  officialAnalysis?: string[]; // 官方解析
+  officialAnalysis?: any; // 官方解析或 AI 扩展解析
 };
+
+function isStructuredAnalysis(
+  value: unknown,
+): value is { reference?: unknown; aiGrammarAnalysis?: unknown } {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function renderInlineEmphasis(text: string, keyPrefix: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return (
+        <strong key={`${keyPrefix}-${index}`} className="font-semibold text-slate-900">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+
+    return <span key={`${keyPrefix}-${index}`}>{part}</span>;
+  });
+}
+
+function renderStructuredAnalysisText(text: string) {
+  const lines = text.split(/\r?\n/);
+  const nodes: ReactNode[] = [];
+  let paragraphBuffer: string[] = [];
+  let listBuffer: string[] = [];
+
+  const flushParagraph = () => {
+    if (!paragraphBuffer.length) return;
+    const paragraph = paragraphBuffer.join(" ").trim();
+    if (!paragraph) {
+      paragraphBuffer = [];
+      return;
+    }
+
+    const key = `paragraph-${nodes.length}`;
+    nodes.push(
+      <p key={key} className="text-[15px] leading-8 text-slate-700">
+        {renderInlineEmphasis(paragraph, key)}
+      </p>,
+    );
+    paragraphBuffer = [];
+  };
+
+  const flushList = () => {
+    if (!listBuffer.length) return;
+    const key = `list-${nodes.length}`;
+    nodes.push(
+      <ul
+        key={key}
+        className="list-disc space-y-2 pl-5 text-[15px] leading-8 text-slate-700 marker:text-slate-400"
+      >
+        {listBuffer.map((item, index) => (
+          <li key={`${key}-${index}`}>
+            {renderInlineEmphasis(item, `${key}-${index}`)}
+          </li>
+        ))}
+      </ul>,
+    );
+    listBuffer = [];
+  };
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      flushList();
+      return;
+    }
+
+    if (line.startsWith("### ")) {
+      flushParagraph();
+      flushList();
+      nodes.push(
+        <h5 key={`h5-${nodes.length}`} className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+          {line.slice(4)}
+        </h5>,
+      );
+      return;
+    }
+
+    if (line.startsWith("## ")) {
+      flushParagraph();
+      flushList();
+      nodes.push(
+        <h4 key={`h4-${nodes.length}`} className="text-lg font-semibold text-slate-900">
+          {line.slice(3)}
+        </h4>,
+      );
+      return;
+    }
+
+    if (line.startsWith("- ") || line.startsWith("* ")) {
+      flushParagraph();
+      listBuffer.push(line.slice(2).trim());
+      return;
+    }
+
+    paragraphBuffer.push(line);
+  });
+
+  flushParagraph();
+  flushList();
+
+  return <div className="space-y-4">{nodes}</div>;
+}
 
 export function ObjectiveQuestionCard({
   question,
@@ -41,7 +148,7 @@ export function ObjectiveQuestionCard({
 }: {
   question: ObjectiveQuestion;
   selectedAnswers: string[]; // 用户选中的答案列表
-  renderedStem: ReactNode; // 预处理过的题干组件
+  renderedStem: any; // 预处理过的题干组件
   resultData?: ObjectiveResult; // 批改后的结果数据
   hasResult: boolean; // 是否已经出分
   onToggleCheckbox: (questionId: string, value: string) => void; // 多选题切换逻辑
@@ -154,12 +261,44 @@ export function ObjectiveQuestionCard({
               题目解析 (Official Analysis)
             </div>
             <div className="prose prose-sm max-w-none rounded-md border border-orange-100 bg-orange-50/50 p-4 text-sm text-gray-600">
-              {/* 解析内容可能包含多行 HTML */}
-              <div
-                dangerouslySetInnerHTML={{
-                  __html: resultData.officialAnalysis.join("<br/>"),
-                }}
-              />
+              {Array.isArray(resultData.officialAnalysis) ? (
+                <div
+                  dangerouslySetInnerHTML={{
+                    __html: resultData.officialAnalysis.join("<br/>"),
+                  }}
+                />
+              ) : isStructuredAnalysis(resultData.officialAnalysis) ? (
+                <div className="space-y-4">
+                  {resultData.officialAnalysis.reference ? (
+                    <div>
+                      <div className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
+                        Reference
+                      </div>
+                      <div
+                        dangerouslySetInnerHTML={{
+                          __html: Array.isArray(resultData.officialAnalysis.reference)
+                            ? resultData.officialAnalysis.reference.join("<br/>")
+                            : String(resultData.officialAnalysis.reference),
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  {resultData.officialAnalysis.aiGrammarAnalysis ? (
+                    <div className="rounded-md border border-violet-200 bg-violet-50/70 p-3">
+                      <div className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-violet-700">
+                        AI Grammar Analysis
+                      </div>
+                      <div className="rounded-xl border border-violet-100 bg-white/75 p-4">
+                        {renderStructuredAnalysisText(
+                          String(resultData.officialAnalysis.aiGrammarAnalysis),
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                renderStructuredAnalysisText(String(resultData.officialAnalysis))
+              )}
             </div>
           </div>
         )}

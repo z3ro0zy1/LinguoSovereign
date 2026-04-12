@@ -7,7 +7,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ObjectiveRenderer from "./ObjectiveRenderer"; // 引入客观题渲染器 (听力/阅读)
 import SubjectiveRenderer from "./SubjectiveRenderer"; // 引入主观题渲染器 (写作/口语)
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,15 @@ export default function EvalWrapper({
     unknown
   > | null>(() => {
     if (typeof window === "undefined") return null;
+    /**
+     * 主观题页面不再从 localStorage 恢复旧评测结果。
+     * 原因：
+     * 1. 旧结果很容易在清库后继续残留，造成“页面还有历史评分”的错觉。
+     * 2. Speaking / Writing 更适合显示当前这次请求真实返回的结果，而不是浏览器陈旧缓存。
+     */
+    if (unit.category !== "Reading/Listening") {
+      return null;
+    }
 
     const savedRes = localStorage.getItem(`linguo_result_${unit.id}`);
     if (!savedRes) return null;
@@ -85,17 +94,43 @@ export default function EvalWrapper({
   const isWriting = unit.category === "Writing"; // 是否是写作
   const isSpeakingFreeChat =
     unit.category === "Speaking" && subjectiveMode === "ai";
+  const isSpeakingTranscript =
+    unit.category === "Speaking" && subjectiveMode !== "ai";
+
+  /**
+   * 口语“转录评分”有一个特殊约束：
+   * 用户通常不是通过完整 flow 参数进入，而是从题组列表里点开单个 part。
+   * 这时 allFlowIds 往往为空，但页面其实仍然拿得到同组 siblings（Part 1 / Part 2 / Part 3）。
+   *
+   * 如果继续只依赖 allFlowIds，就会把当前页误判成“最后一部分”，
+   * 导致用户在第一个 speaking part 的最后一题答完后，就提前看到最终评分按钮。
+   *
+   * 这里改成：
+   * - speaking transcript 优先使用 siblings 作为整组提交流程
+   * - 其他题型仍保持原有 allFlowIds 行为
+   */
+  const effectiveFlowIds =
+    isSpeakingTranscript && siblings?.length
+      ? siblings.map((sibling) => sibling.id)
+      : allFlowIds;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (unit.category !== "Reading/Listening") {
+      localStorage.removeItem(`linguo_result_${unit.id}`);
+    }
+  }, [unit.category, unit.id]);
 
   // --- 模考连考逻辑 (Full Test Navigation Logic) ---
-  const currentIndex = allFlowIds.indexOf(unit.id); // 看看当前题在模考序列里排第几
+  const currentIndex = effectiveFlowIds.indexOf(unit.id); // 看看当前题在模考序列里排第几
   const isLastPart =
-    currentIndex === -1 || currentIndex === allFlowIds.length - 1; // 是不是最后一门考试
+    currentIndex === -1 || currentIndex === effectiveFlowIds.length - 1; // 是不是最后一门考试
 
   // 计算下一项考试的 ID 和链接
   const nextFlowIds =
     currentIndex >= 0
-      ? allFlowIds.slice(currentIndex + 1)
-      : allFlowIds.slice(1);
+      ? effectiveFlowIds.slice(currentIndex + 1)
+      : effectiveFlowIds.slice(1);
   const nextHref =
     nextFlowIds.length > 0
       ? `/eval/${nextFlowIds[0]}?flow=${nextFlowIds.join(",")}`
@@ -169,7 +204,7 @@ export default function EvalWrapper({
           onResult={handleGlobalResult}
           result={submissionResult}
           isLastPart={isLastPart}
-          allFlowIds={allFlowIds}
+          allFlowIds={effectiveFlowIds}
         />
       ) : (
         <SubjectiveRenderer
@@ -179,7 +214,7 @@ export default function EvalWrapper({
           onResult={handleGlobalResult}
           result={submissionResult}
           isLastPart={isLastPart}
-          allFlowIds={allFlowIds}
+          allFlowIds={effectiveFlowIds}
         />
       )}
 

@@ -1,13 +1,13 @@
 import type { ReactElement } from "react";
 import { createPortal } from "react-dom";
 
-type NavigatorQuestion = {
+export type NavigatorQuestion = {
   id: string;
   serialNumber?: number;
   answer?: unknown;
 };
 
-type NavigatorResult = {
+export type NavigatorResult = {
   questionId: string;
   isCorrect?: boolean;
   subResults?: Array<{ isCorrect?: boolean }>;

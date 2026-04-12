@@ -4,6 +4,7 @@
  */
 
 type StoredAnswerValue = string | string[];
+const UNIT_STATE_KEY_PREFIX = "linguo_state_";
 
 // 定义一个“题目状态”的数据结构
 export interface StoredUnitState {
@@ -47,10 +48,15 @@ export const saveUnitState = (
   timeSpent: number,
 ) => {
   if (typeof window === "undefined") return; // 只有在浏览器里才能运行
-  localStorage.setItem(`linguo_ans_${unitId}`, JSON.stringify(answers));
-  localStorage.setItem(`linguo_req_${unitId}`, JSON.stringify(reqIds));
-  localStorage.setItem(`linguo_cat_${unitId}`, category);
-  localStorage.setItem(`linguo_time_${unitId}`, timeSpent.toString());
+  localStorage.setItem(
+    `${UNIT_STATE_KEY_PREFIX}${unitId}`,
+    JSON.stringify({
+      answers,
+      reqIds,
+      category,
+      timeSpent,
+    } satisfies StoredUnitState),
+  );
 };
 
 /**
@@ -60,6 +66,20 @@ export const saveUnitState = (
 export const getUnitState = (unitId: string): StoredUnitState => {
   if (typeof window === "undefined") {
     return EMPTY_UNIT_STATE;
+  }
+
+  const nextState = safeParse<StoredUnitState>(
+    localStorage.getItem(`${UNIT_STATE_KEY_PREFIX}${unitId}`),
+    EMPTY_UNIT_STATE,
+  );
+
+  if (
+    Object.keys(nextState.answers).length > 0 ||
+    nextState.reqIds.length > 0 ||
+    nextState.category ||
+    nextState.timeSpent > 0
+  ) {
+    return nextState;
   }
 
   return {
@@ -85,6 +105,7 @@ export const getUnitState = (unitId: string): StoredUnitState => {
  */
 export const clearUnitState = (unitId: string) => {
   if (typeof window === "undefined") return;
+  localStorage.removeItem(`${UNIT_STATE_KEY_PREFIX}${unitId}`);
   localStorage.removeItem(`linguo_ans_${unitId}`);
   localStorage.removeItem(`linguo_req_${unitId}`);
   localStorage.removeItem(`linguo_cat_${unitId}`);

@@ -59,6 +59,17 @@ type PromptRecord = {
 type LiveTokenResponse = {
   token: string;
   model: string;
+  debug?: PromptDebugPayload;
+};
+
+type PromptDebugPayload = {
+  model: string | null;
+  promptSource: string;
+  promptId: string | null;
+  promptName: string | null;
+  promptPurpose: string;
+  promptPreview: string;
+  questionBundlePreview?: string;
 };
 
 type LiveSession = Awaited<ReturnType<GoogleGenAI["live"]["connect"]>>;
@@ -186,6 +197,10 @@ export function SpeakingAiRenderer({ unit }: { unit: SpeakingUnit }) {
   const [defaultPromptContent, setDefaultPromptContent] = useState("");
   const [promptLoading, setPromptLoading] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
+  const [promptDebug, setPromptDebug] = useState<PromptDebugPayload | null>(
+    null,
+  );
+  const isDevelopment = process.env.NODE_ENV === "development";
 
   const sessionRef = useRef<LiveSession | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -444,6 +459,7 @@ export function SpeakingAiRenderer({ unit }: { unit: SpeakingUnit }) {
         setPromptName(selected?.name || t("promptFallbackName"));
         setPromptContent(selected?.content || "");
         setDefaultPromptContent(selected?.content || "");
+        setPromptDebug(null);
       } catch (loadError) {
         if (cancelled) return;
         console.error(loadError);
@@ -451,6 +467,7 @@ export function SpeakingAiRenderer({ unit }: { unit: SpeakingUnit }) {
         setPromptName(t("promptFallbackName"));
         setPromptContent("");
         setDefaultPromptContent("");
+        setPromptDebug(null);
         setError(t("promptLoadFailed"));
       } finally {
         if (!cancelled) {
@@ -481,6 +498,9 @@ export function SpeakingAiRenderer({ unit }: { unit: SpeakingUnit }) {
   const connectLiveSession = useCallback(async () => {
     setError("");
     setThinking(true);
+    if (process.env.NODE_ENV === "development") {
+      setPromptDebug(null);
+    }
 
     const tokenResponse = await fetch("/api/speaking/live", {
       method: "POST",
@@ -502,6 +522,10 @@ export function SpeakingAiRenderer({ unit }: { unit: SpeakingUnit }) {
           ("error" in tokenJson && tokenJson.error) ||
           t("aiConversationFailed"),
       );
+    }
+
+    if (tokenJson.debug && process.env.NODE_ENV === "development") {
+      setPromptDebug(tokenJson.debug);
     }
 
     const ai = new GoogleGenAI({
@@ -831,6 +855,39 @@ export function SpeakingAiRenderer({ unit }: { unit: SpeakingUnit }) {
               <div className="rounded-[1.5rem] border border-white/80 bg-white/90 p-5 text-sm leading-7 text-slate-600 shadow-sm">
                 {t("aiSpeakingHint")}
               </div>
+
+              {isDevelopment ? (
+                <div className="rounded-[1.5rem] border border-amber-200 bg-amber-50/80 p-5 text-sm text-slate-700 shadow-sm">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-amber-700">
+                    Dev Debug
+                  </p>
+                  <div className="mt-3 space-y-2 font-mono text-[12px] leading-6">
+                    <div>frontend.promptPurpose: free_chat</div>
+                    <div>frontend.promptId: {promptId || "none"}</div>
+                    <div>frontend.promptName: {promptName || "none"}</div>
+                    <div>
+                      frontend.promptPreview:{" "}
+                      {(promptContent || defaultPromptContent || "[empty]").slice(0, 180)}
+                    </div>
+                    {promptDebug ? (
+                      <>
+                        <div>backend.model: {promptDebug.model || "none"}</div>
+                        <div>backend.promptSource: {promptDebug.promptSource}</div>
+                        <div>backend.promptId: {promptDebug.promptId || "none"}</div>
+                        <div>backend.promptName: {promptDebug.promptName || "none"}</div>
+                        <div>backend.promptPurpose: {promptDebug.promptPurpose}</div>
+                        <div>backend.promptPreview: {promptDebug.promptPreview || "[empty]"}</div>
+                        <div>
+                          backend.questionBundlePreview:{" "}
+                          {promptDebug.questionBundlePreview || "[empty]"}
+                        </div>
+                      </>
+                    ) : (
+                      <div>backend.debug: start a session to inspect actual live model and prompt resolution</div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="flex-1 space-y-3 overflow-y-auto rounded-[1.5rem] border border-white/80 bg-white/90 p-5 shadow-sm">
                 {conversation.length ? (

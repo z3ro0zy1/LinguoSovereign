@@ -6,14 +6,16 @@
 
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { signOut, useSession } from "next-auth/react"; // 身份验证相关：注销、获取当前用户信息
+import Image from "next/image";
 import Link from "next/link";
 import {
   ArrowRight,
   BarChart3,
   BookOpen,
   BrainCircuit,
+  ChevronDown,
   Edit3,
   Headphones,
   List as ListIcon,
@@ -152,6 +154,13 @@ function formatHistoryDate(value: string) {
   return new Date(value).toLocaleString();
 }
 
+function getAvatarSource(image: string | null | undefined) {
+  if (!image) return null;
+  if (image.startsWith("http://") || image.startsWith("https://")) return image;
+  if (image.startsWith("/")) return image;
+  return `/${image}`;
+}
+
 function isUnitInModule(unit: DashboardUnit, tab: DashboardTab) {
   if (tab === "Reading") {
     return (
@@ -188,85 +197,37 @@ function getGroupedTests(units: DashboardUnit[]) {
   });
 }
 
-function HeroMetric({
-  label,
-  value,
-  inverted = false,
-}: {
-  label: string;
-  value: string | number;
-  inverted?: boolean;
-}) {
-  return (
-    <div className={`rounded-[1.6rem] border px-5 py-4 backdrop-blur-xl ${
-      inverted
-        ? "border-white/10 bg-white/[0.04]"
-        : "border-white/70 bg-white/70 shadow-[0_18px_40px_rgba(15,23,42,0.06)]"
-    }`}>
-      <p className={`text-xs font-bold uppercase tracking-[0.22em] ${
-        inverted ? "text-white/40" : "text-slate-400"
-      }`}>
-        {label}
-      </p>
-      <p className={`mt-3 text-3xl font-black tracking-tight ${
-        inverted ? "text-white" : "text-slate-900"
-      }`}>
-        {value}
-      </p>
-    </div>
-  );
-}
-
 function ModuleShortcut({
   tab,
   active,
-  count,
   onClick,
 }: {
   tab: ModuleTab;
   active: boolean;
-  count: number;
   onClick: () => void;
 }) {
   const { locale } = useLocale();
   const MODULES = getModules(locale);
   const config = MODULES[tab];
-  const Icon = config.icon;
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`group rounded-[1.8rem] border p-5 text-left transition-all ${
+      className={`group relative inline-flex min-w-0 items-center justify-center rounded-full px-7 py-5 text-center transition-all duration-300 ${
         active
-          ? "border-slate-900 bg-slate-900 text-white shadow-[0_22px_45px_rgba(15,23,42,0.22)]"
-          : `border-white/70 bg-gradient-to-br ${config.soft} shadow-[0_18px_40px_rgba(15,23,42,0.06)] hover:-translate-y-0.5`
+          ? "bg-slate-900 text-white shadow-[0_20px_45px_rgba(15,23,42,0.18)]"
+          : "text-slate-600 hover:bg-white/72 hover:text-slate-900"
       }`}
     >
-      <div className="flex items-start justify-between gap-4">
-        <div
-          className={`rounded-2xl p-3 ${active ? "bg-white/12" : "bg-white/80"}`}
-        >
-          <Icon
-            className={`h-5 w-5 ${active ? "text-white" : config.accent}`}
-          />
-        </div>
-        <Badge
-          className={
-            active
-              ? "bg-white/12 text-white hover:bg-white/12"
-              : "bg-slate-900 text-white hover:bg-slate-900"
-          }
-        >
-          {count} {locale === "zh" ? "套" : "sets"}
-        </Badge>
-      </div>
-      <h3 className="mt-6 text-xl font-black tracking-tight">{config.label}</h3>
-      <p
-        className={`mt-2 text-sm ${active ? "text-white/72" : "text-slate-600"}`}
-      >
-        {config.description}
-      </p>
+      <span className={`pointer-events-none absolute inset-0 rounded-full ring-1 transition-all ${
+        active
+          ? "ring-slate-900/90"
+          : "ring-slate-200/70 group-hover:ring-white/80"
+      }`}></span>
+      <span className="relative truncate text-[17px] font-black tracking-[-0.03em]">
+        {config.label}
+      </span>
     </button>
   );
 }
@@ -347,11 +308,16 @@ function TestGroupedView({
                       new Date(b.date).getTime() - new Date(a.date).getTime(),
                   );
                 const latest = attempts[0];
+                const isSpeakingUnit = unit.category === "Speaking";
 
                 return (
                   <div
                     key={unit.id}
-                    className="grid gap-5 px-6 py-5 lg:grid-cols-[minmax(0,1.2fr)_200px_180px_220px] lg:items-center"
+                    className={`grid gap-5 px-6 py-5 ${
+                      isSpeakingUnit
+                        ? "xl:grid-cols-[minmax(0,1.35fr)_180px_160px_280px]"
+                        : "lg:grid-cols-[minmax(0,1.2fr)_200px_180px_220px]"
+                    } lg:items-center`}
                   >
                     <div>
                       <p className="text-sm font-semibold text-slate-400">
@@ -380,7 +346,15 @@ function TestGroupedView({
 {locale === "zh" ? "答题历史" : "Attempt History"}
                       </p>
                       <div className="mt-2 text-sm text-slate-600">
-                        {attempts.length ? (
+                        {isSpeakingUnit ? (
+                          <span className="font-medium text-slate-500">
+                            {latest
+                              ? latest.evaluated === false
+                                ? (locale === "zh" ? "最近一次未评估" : "Latest attempt not evaluated")
+                                : `${locale === "zh" ? "最近评分" : "Latest band"} ${formatScore(latest.score)}`
+                              : (locale === "zh" ? "暂无练习记录" : "No practice records")}
+                          </span>
+                        ) : attempts.length ? (
                           <Dialog>
                             <DialogTrigger asChild>
                               <button
@@ -437,22 +411,89 @@ function TestGroupedView({
                     </div>
 
                     <div className="flex flex-wrap justify-start gap-3 lg:justify-end">
-                      {unit.category === "Speaking" ? (
-                        <>
-                          <Link href={getStartHref(unit)}>
-                            <Button className="rounded-full bg-slate-900 px-5 text-white hover:bg-slate-800">
-                              {locale === "zh" ? "开始训练" : "Start Practice"}
-                            </Button>
-                          </Link>
-                          <Link href={getStartHref(unit, "ai")}>
-                            <Button
-                              variant="outline"
-                              className="rounded-full px-5"
-                            >
-                              {locale === "zh" ? "AI 模式" : "AI Mode"}
-                            </Button>
-                          </Link>
-                        </>
+                      {isSpeakingUnit ? (
+                        <div className="w-full max-w-[280px] rounded-[1.4rem] border border-slate-200 bg-slate-50/70 p-2">
+                          <p className="px-2 pb-2 text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                            {locale === "zh" ? "训练模式" : "Practice Modes"}
+                          </p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Link href={getStartHref(unit)}>
+                              <Button className="w-full rounded-[1rem] bg-slate-900 text-white hover:bg-slate-800">
+                                {locale === "zh" ? "转录评分" : "Transcript"}
+                              </Button>
+                            </Link>
+                            <Link href={getStartHref(unit, "ai")}>
+                              <Button
+                                variant="outline"
+                                className="w-full rounded-[1rem] border-slate-200 bg-white"
+                              >
+                                {locale === "zh" ? "自由对话" : "Live Voice"}
+                              </Button>
+                            </Link>
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  className="w-full rounded-[1rem] border-slate-200 bg-white"
+                                >
+                                  {locale === "zh" ? "历史评分" : "Score History"}
+                                </Button>
+                              </DialogTrigger>
+                              <DialogContent className="max-w-xl rounded-[2rem] border-white/70 bg-white/92 backdrop-blur-2xl">
+                                <DialogHeader>
+                                  <DialogTitle>
+                                    {formatIELTSTitle(unit.title)}
+                                  </DialogTitle>
+                                </DialogHeader>
+                                <div className="space-y-3">
+                                  {attempts.length ? (
+                                    attempts.map((attempt, index) => (
+                                      <div
+                                        key={attempt.id}
+                                        className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/80 p-4"
+                                      >
+                                        <div>
+                                          <p className="font-semibold text-slate-900">
+                                            {locale === "zh"
+                                              ? `第 ${attempts.length - index} 次评分`
+                                              : `Scored attempt ${attempts.length - index}`}
+                                          </p>
+                                          <p className="text-sm text-slate-500">
+                                            {formatHistoryDate(attempt.date)}
+                                          </p>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                          <span className="text-sm font-bold text-slate-800">
+                                            {attempt.evaluated === false
+                                              ? (locale === "zh" ? "已保存，未评估" : "Saved, not evaluated")
+                                              : `Band ${formatScore(attempt.score)}`}
+                                          </span>
+                                          <Link
+                                            href={`/review/${unit.id}?submissionId=${attempt.id}`}
+                                            className="text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+                                          >
+                                            {locale === "zh" ? "查看评分" : "View Review"}
+                                          </Link>
+                                        </div>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-4 text-sm text-slate-500">
+                                      {locale === "zh" ? "暂无历史评分记录" : "No scoring history yet"}
+                                    </div>
+                                  )}
+                                </div>
+                              </DialogContent>
+                            </Dialog>
+                            <Link href={`/review/${unit.id}`}>
+                              <Button variant="outline" className="w-full rounded-[1rem] border-slate-200 bg-white px-5">
+                                <ListIcon className="mr-2 h-4 w-4" /> {locale === "zh" ? "详解" : "Reference"}
+                              </Button>
+                            </Link>
+                          </div>
+                        </div>
                       ) : (
                         <Link href={getStartHref(unit)}>
                           <Button className="rounded-full bg-slate-900 px-5 text-white hover:bg-slate-800">
@@ -460,11 +501,67 @@ function TestGroupedView({
                           </Button>
                         </Link>
                       )}
-                      <Link href={`/review/${unit.id}`}>
-                        <Button variant="outline" className="rounded-full px-5">
-                          <ListIcon className="mr-2 h-4 w-4" /> {locale === "zh" ? "详解" : "Reference"}
-                        </Button>
-                      </Link>
+                      {!isSpeakingUnit ? (
+                        <>
+                          <Dialog>
+                            <DialogTrigger asChild>
+                              <Button variant="outline" className="rounded-full px-5">
+                                <BarChart3 className="mr-2 h-4 w-4" /> {locale === "zh" ? "历史记录" : "History"}
+                              </Button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-xl rounded-[2rem] border-white/70 bg-white/92 backdrop-blur-2xl">
+                              <DialogHeader>
+                                <DialogTitle>
+                                  {formatIELTSTitle(unit.title)}
+                                </DialogTitle>
+                              </DialogHeader>
+                              <div className="space-y-3">
+                                {attempts.length ? (
+                                  attempts.map((attempt, index) => (
+                                    <div
+                                      key={attempt.id}
+                                      className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/80 p-4"
+                                    >
+                                      <div>
+                                        <p className="font-semibold text-slate-900">
+                                          {locale === "zh"
+                                            ? `第 ${attempts.length - index} 次练习`
+                                            : `Attempt ${attempts.length - index}`}
+                                        </p>
+                                        <p className="text-sm text-slate-500">
+                                          {formatHistoryDate(attempt.date)}
+                                        </p>
+                                      </div>
+                                      <div className="flex items-center gap-4">
+                                        <span className="text-sm font-bold text-slate-800">
+                                          {attempt.evaluated === false
+                                            ? (locale === "zh" ? "已保存，未评估" : "Saved, not evaluated")
+                                            : `Band ${formatScore(attempt.score)}`}
+                                        </span>
+                                        <Link
+                                          href={`/review/${unit.id}?submissionId=${attempt.id}`}
+                                          className="text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+                                        >
+                                          {locale === "zh" ? "查看记录" : "View Review"}
+                                        </Link>
+                                      </div>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-4 text-sm text-slate-500">
+                                    {locale === "zh" ? "暂无历史记录" : "No history yet"}
+                                  </div>
+                                )}
+                              </div>
+                            </DialogContent>
+                          </Dialog>
+                          <Link href={`/review/${unit.id}`}>
+                            <Button variant="outline" className="rounded-full px-5">
+                              <ListIcon className="mr-2 h-4 w-4" /> {locale === "zh" ? "详解" : "Reference"}
+                            </Button>
+                          </Link>
+                        </>
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -618,6 +715,8 @@ export default function DashboardClient({
   const [selectedBook, setSelectedBook] = useState<string>(
     getBookLabel(allUnits[0]?.title || "Other"), // 默认选中第一本书
   );
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
 
   /**
    * 当用户登录时，请求后端接口获取他们的“做题足迹”（历史分数等）
@@ -640,6 +739,20 @@ export default function DashboardClient({
 
     return () => controller.abort();
   }, [locale, session]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!accountMenuRef.current) return;
+      if (!accountMenuRef.current.contains(event.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [accountMenuOpen]);
 
   /**
    * 自动计算当前题库里一共有多少本书（剑 1 ~ 剑 18 等）
@@ -723,6 +836,8 @@ export default function DashboardClient({
   // 给用户的称呼
   const greeting =
     session?.user?.name || session?.user?.email?.split("@")[0] || (locale === "zh" ? "学员" : "Scholar");
+  const userInitial = greeting.slice(0, 1).toUpperCase();
+  const avatarSrc = getAvatarSource(session?.user?.image);
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f4f5f7] pb-20 text-slate-900 selection:bg-sky-200/70">
@@ -781,31 +896,75 @@ export default function DashboardClient({
               <div className="h-9 w-9 animate-spin rounded-full border-2 border-slate-200 border-t-slate-900" />
             ) : session ? (
               <>
-                <div className="hidden md:block">
-                  <p className="text-sm font-semibold text-slate-900">
-                    {greeting}
-                  </p>
-                </div>
-                <Link href="/dashboard/analytics">
-                  <Button variant="outline" className="rounded-full">
-                    <BarChart3 className="mr-2 h-4 w-4" /> {locale === "zh" ? "数据面板" : "Analytics"}
-                  </Button>
-                </Link>
-                <Link href="/profile">
-                  <Button
-                    variant="ghost"
-                    className="rounded-full text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                <div ref={accountMenuRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setAccountMenuOpen((value) => !value)}
+                    className="flex items-center gap-3 rounded-full border border-slate-200/80 bg-white/80 px-2.5 py-2 shadow-[0_8px_24px_rgba(15,23,42,0.05)] transition-colors hover:border-slate-300 hover:bg-white"
                   >
-                    <Settings className="mr-2 h-4 w-4" /> {locale === "zh" ? "资料" : "Profile"}
-                  </Button>
-                </Link>
-                <Button
-                  onClick={() => signOut()}
-                  variant="ghost"
-                  className="rounded-full text-red-600 hover:bg-red-50 hover:text-red-700"
-                >
-                  {locale === "zh" ? "登出" : "Sign Out"}
-                </Button>
+                    <div className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-sm font-black text-white">
+                      {avatarSrc ? (
+                        <Image
+                          src={avatarSrc}
+                          alt={session.user?.name || "Avatar"}
+                          fill
+                          className="object-cover"
+                          sizes="36px"
+                        />
+                      ) : (
+                        userInitial
+                      )}
+                    </div>
+                    <div className="hidden pr-1 text-left md:block">
+                      <p className="text-sm font-semibold text-slate-900">{greeting}</p>
+                    </div>
+                    <ChevronDown
+                      className={`h-4 w-4 text-slate-400 transition-transform ${
+                        accountMenuOpen ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+
+                  {accountMenuOpen ? (
+                    <div className="absolute right-0 top-[calc(100%+0.75rem)] z-50 w-60 overflow-hidden rounded-[1.4rem] border border-slate-200/80 bg-white/96 p-2 shadow-[0_22px_60px_rgba(15,23,42,0.12)] backdrop-blur-2xl">
+                      <div className="border-b border-slate-100 px-3 py-3">
+                        <p className="text-sm font-semibold text-slate-900">{greeting}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {session.user?.email || (locale === "zh" ? "已登录用户" : "Signed-in user")}
+                        </p>
+                      </div>
+                      <div className="space-y-1 p-2">
+                        <Link
+                          href="/dashboard/analytics"
+                          onClick={() => setAccountMenuOpen(false)}
+                          className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-950"
+                        >
+                          <BarChart3 className="h-4 w-4" />
+                          {locale === "zh" ? "数据面板" : "Analytics"}
+                        </Link>
+                        <Link
+                          href="/profile"
+                          onClick={() => setAccountMenuOpen(false)}
+                          className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 hover:text-slate-950"
+                        >
+                          <Settings className="h-4 w-4" />
+                          {locale === "zh" ? "个人资料" : "Profile"}
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAccountMenuOpen(false);
+                            void signOut();
+                          }}
+                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-red-600 transition-colors hover:bg-red-50 hover:text-red-700"
+                        >
+                          <ArrowRight className="h-4 w-4" />
+                          {locale === "zh" ? "登出" : "Sign Out"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               </>
             ) : (
               // 未登录显示的注册/登录按钮
@@ -858,39 +1017,39 @@ export default function DashboardClient({
         {activeTab === "home" ? (
           <>
             <section className="-mx-4 overflow-hidden sm:-mx-6 lg:-mx-8">
-              <div className="relative min-h-[78svh] border-y border-white/70 bg-[linear-gradient(180deg,#f8f8f6_0%,#f3f4f6_52%,#edf1f5_100%)]">
+              <div className="relative min-h-[66svh] border-y border-white/70 bg-[linear-gradient(180deg,#f8f8f6_0%,#f3f4f6_52%,#edf1f5_100%)]">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(255,255,255,0.96),transparent_30%),radial-gradient(circle_at_82%_24%,rgba(164,184,204,0.18),transparent_26%),radial-gradient(circle_at_72%_74%,rgba(126,166,214,0.14),transparent_24%)]" />
                 <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-slate-300/70 to-transparent" />
-                <div className="relative mx-auto flex min-h-[78svh] max-w-[1480px] flex-col justify-between px-6 py-12 sm:px-8 lg:px-10 lg:py-14">
-                  <div className="grid gap-14 lg:grid-cols-[minmax(0,1.15fr)_360px] lg:items-start">
-                    <div className="max-w-5xl">
+                <div className="relative mx-auto flex min-h-[66svh] max-w-[1480px] flex-col justify-between px-6 py-10 sm:px-8 lg:px-10 lg:py-12">
+                  <div className="grid gap-12 lg:grid-cols-[minmax(0,1.1fr)_320px] lg:items-start">
+                    <div className="max-w-4xl">
                       <p className="text-[11px] font-black uppercase tracking-[0.42em] text-slate-400">
                         LinguoSovereign
                       </p>
                       <p className="mt-3 text-sm font-semibold text-slate-500">
                         {locale === "zh" ? "AI IELTS Studio" : "AI IELTS Studio"}
                       </p>
-                      <h1 className="mt-10 max-w-5xl text-[46px] font-black leading-[0.96] tracking-[-0.055em] text-slate-950 md:text-[72px] xl:text-[96px]">
+                      <h1 className="mt-8 max-w-4xl text-[38px] font-black leading-[0.98] tracking-[-0.05em] text-slate-950 md:text-[58px] xl:text-[72px]">
                         {locale === "zh" ? (
                           <>
-                            更安静地完成
+                            AI 驱动的学习软件，
                             <br />
-                            练习、评分与复盘。
+                            为持续进步而设计。
                           </>
                         ) : (
                           <>
-                            A calmer studio
+                            AI-powered learning
                             <br />
-                            for practice and review.
+                            software for steady progress.
                           </>
                         )}
                       </h1>
-                      <p className="mt-8 max-w-xl text-lg leading-8 text-slate-600">
+                      <p className="mt-6 max-w-lg text-base leading-8 text-slate-600">
                         {locale === "zh"
-                          ? "把 Cambridge 题组、AI 反馈和个人轨迹收进一块连续的工作台。颜色更克制，信息更清楚。"
-                          : "Bring Cambridge sets, AI feedback, and your history into one continuous workspace."}
+                          ? "把题库、反馈、语音训练和个人轨迹收进一条连续的学习路径。"
+                          : "Bring practice sets, feedback, voice training, and personal history into one continuous learning flow."}
                       </p>
-                      <div className="mt-10 flex flex-wrap gap-3">
+                      <div className="mt-8 flex flex-wrap gap-3">
                         <Button
                           onClick={() => setActiveTab("FullTest")}
                           className="rounded-full bg-slate-950 px-7 text-white hover:bg-slate-800"
@@ -907,12 +1066,12 @@ export default function DashboardClient({
                       </div>
                     </div>
 
-                    <div className="rounded-[2.2rem] border border-white/80 bg-white/58 p-6 shadow-[0_28px_70px_rgba(148,163,184,0.14)] backdrop-blur-2xl">
+                    <div className="rounded-[2rem] border border-white/80 bg-white/58 p-5 shadow-[0_24px_60px_rgba(148,163,184,0.12)] backdrop-blur-2xl">
                       <div className="border-b border-slate-200/70 pb-5">
                         <p className="text-[11px] font-black uppercase tracking-[0.3em] text-slate-400">
                           {locale === "zh" ? "当前工作台" : "Current Workspace"}
                         </p>
-                        <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-950">
+                        <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
                           {greeting}
                         </h2>
                       </div>
@@ -947,32 +1106,18 @@ export default function DashboardClient({
                       </div>
                     </div>
                   </div>
-
-                  <div className="mt-12 grid gap-5 border-t border-slate-200/70 pt-8 md:grid-cols-5">
-                    <div className="md:col-span-2">
-                      <p className="text-[11px] font-black uppercase tracking-[0.32em] text-slate-400">
-                        {locale === "zh" ? "题库规模" : "Library Scale"}
-                      </p>
-                      <p className="mt-3 text-2xl font-black tracking-tight text-slate-950 md:text-3xl">
-                        {locale === "zh" ? "同一界面里管理听、读、写、口语四条训练路径。" : "One surface for reading, listening, writing, and speaking."}
-                      </p>
-                    </div>
-                    <HeroMetric label="Reading" value={bankStats.Reading} />
-                    <HeroMetric label="Listening" value={bankStats.Listening} />
-                    <HeroMetric label="Writing" value={bankStats.Writing} />
-                  </div>
                 </div>
               </div>
             </section>
 
-            <section className="mt-14 grid gap-14 xl:grid-cols-[minmax(0,1.08fr)_340px]">
+            <section className="mt-12 grid gap-12 xl:grid-cols-[minmax(0,1.06fr)_320px]">
               <div>
                 <div className="border-b border-slate-200/80 pb-5">
                   <p className="text-[11px] font-black uppercase tracking-[0.32em] text-slate-400">
                     {locale === "zh" ? "模块导览" : "Module Guide"}
                   </p>
-                  <h2 className="mt-3 text-4xl font-black tracking-[-0.04em] text-slate-950">
-                    {locale === "zh" ? "从题库入口直接进入工作状态" : "Enter the working surface directly"}
+                  <h2 className="mt-3 text-3xl font-black tracking-[-0.04em] text-slate-950">
+                    {locale === "zh" ? "从题库入口直接进入训练" : "Enter training directly from the library"}
                   </h2>
                 </div>
 
@@ -985,16 +1130,16 @@ export default function DashboardClient({
                         key={tab}
                         type="button"
                         onClick={() => setActiveTab(tab)}
-                        className="group grid w-full gap-4 py-7 text-left md:grid-cols-[72px_minmax(0,1fr)_120px]"
+                        className="group grid w-full gap-4 py-6 text-left md:grid-cols-[72px_minmax(0,1fr)_92px]"
                       >
                         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/80 ring-1 ring-slate-200/80 shadow-[0_14px_30px_rgba(148,163,184,0.1)] transition-transform duration-300 group-hover:-translate-y-0.5">
                           <Icon className={`h-5 w-5 ${config.accent}`} />
                         </div>
                         <div>
-                          <h3 className="text-2xl font-black tracking-tight text-slate-950">
+                          <h3 className="text-xl font-black tracking-tight text-slate-950">
                             {config.label}
                           </h3>
-                          <p className="mt-3 max-w-xl text-sm leading-7 text-slate-600">
+                          <p className="mt-2 max-w-xl text-sm leading-7 text-slate-600">
                             {config.description}
                           </p>
                         </div>
@@ -1014,12 +1159,12 @@ export default function DashboardClient({
                 <p className="text-[11px] font-black uppercase tracking-[0.32em] text-slate-400">
                   {locale === "zh" ? "当前状态" : "Current Status"}
                 </p>
-                <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-950">
-                  {locale === "zh" ? "把历史、分数和入口留在一页里" : "Keep history, scores, and entry points together"}
+                <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
+                  {locale === "zh" ? "历史、分数和入口保持连贯" : "Keep scores and entry points continuous"}
                 </h2>
                 <p className="mt-4 text-sm leading-7 text-slate-600">
                   {locale === "zh"
-                    ? "进入任一模块后，可以直接查看提交记录、详解页和数据面板，不再来回切换多个黑盒入口。"
+                    ? "进入任一模块后，可以直接查看提交记录、详解页和数据面板。"
                     : "Open any module and keep attempts, references, and analytics in one continuous workspace."}
                 </p>
 
@@ -1059,55 +1204,6 @@ export default function DashboardClient({
               </div>
             </section>
 
-            <section className="mt-16 border-t border-slate-200/80 pt-8">
-              <div className="grid gap-8 xl:grid-cols-[160px_minmax(0,1fr)]">
-                <p className="text-[11px] font-black uppercase tracking-[0.32em] text-slate-400">
-                  {locale === "zh" ? "训练流程" : "Training Flow"}
-                </p>
-                <div className="divide-y divide-slate-200/80">
-                  {[
-                    {
-                      index: "01",
-                      title: locale === "zh" ? "选择模块" : "Choose the module",
-                      body:
-                        locale === "zh"
-                          ? "阅读、听力、写作和口语保持同一种工作节奏，入口明确，不再像仪表盘拼图。"
-                          : "Reading, listening, writing, and speaking keep the same working rhythm instead of feeling like a dashboard mosaic.",
-                    },
-                    {
-                      index: "02",
-                      title: locale === "zh" ? "按书册定位" : "Locate by Cambridge book",
-                      body:
-                        locale === "zh"
-                          ? "进入模块后先按书册筛选，再按题目名搜索，路径直接而可预期。"
-                          : "Filter by Cambridge book first, then search by title for a direct and predictable path.",
-                    },
-                    {
-                      index: "03",
-                      title: locale === "zh" ? "训练后回看" : "Review after practice",
-                      body:
-                        locale === "zh"
-                          ? "结束后立刻进入详解或数据面板，看历史记录、分数和 AI 反馈。"
-                          : "Move straight into reference or analytics for history, scores, and AI feedback when you finish.",
-                    },
-                  ].map((item) => (
-                    <div key={item.index} className="grid gap-4 py-6 md:grid-cols-[84px_minmax(0,1fr)]">
-                      <div className="text-[11px] font-black uppercase tracking-[0.3em] text-slate-400">
-                        {item.index}
-                      </div>
-                      <div>
-                        <h3 className="text-2xl font-black tracking-tight text-slate-950">
-                          {item.title}
-                        </h3>
-                        <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                          {item.body}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
           </>
         ) : (
           // 非首页情况：展示具体的模块内容（比如阅读列表）
@@ -1173,18 +1269,25 @@ export default function DashboardClient({
                 </div>
               </div>
 
-              {/* 学科切换的小横条 */}
-              <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                {(Object.keys(MODULES) as ModuleTab[]).map((tab) => (
-                  <ModuleShortcut
-                    key={tab}
-                    tab={tab}
-                    count={bankStats[tab]}
-                    active={activeTab === tab}
-                    onClick={() => setActiveTab(tab)}
-                  />
-                ))}
-              </div>
+              {/* 这排模块快捷卡对单模块页有价值，但在 Full Test 页面是重复入口。
+                  全真考页已经有“书册 + 题组列表 + 启动完整模考”主路径，再放这一排只会分散注意力。 */}
+              {activeTab !== "FullTest" ? (
+                <div className="mt-6 overflow-x-auto">
+                  <div className="inline-flex min-w-full items-center gap-3 rounded-[2rem] border border-white/70 bg-white/45 p-3 shadow-[0_18px_40px_rgba(15,23,42,0.05)] backdrop-blur-xl">
+                    <div className="hidden h-10 w-px bg-slate-200/70 xl:block"></div>
+                    <div className="flex min-w-max items-center gap-3">
+                  {(Object.keys(MODULES) as ModuleTab[]).map((tab) => (
+                    <ModuleShortcut
+                      key={tab}
+                      tab={tab}
+                      active={activeTab === tab}
+                      onClick={() => setActiveTab(tab)}
+                    />
+                  ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
 
               {/* 核心题目列表区域 */}
               <div className="mt-8">

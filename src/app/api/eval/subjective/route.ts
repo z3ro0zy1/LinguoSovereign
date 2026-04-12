@@ -32,6 +32,19 @@ type EvalBody = {
   useAi?: boolean;
 };
 
+type PromptResolutionSource =
+  | "request_content"
+  | "selected_prompt"
+  | "default_prompt"
+  | "fallback";
+
+type ResolvedPrompt = {
+  promptId: string | null;
+  content: string;
+  source: PromptResolutionSource;
+  name: string | null;
+};
+
 const FALLBACK_PROMPTS = {
   writing:
     "You are a professional IELTS examiner. Evaluate the candidate response with clear band-style judgement and specific improvement advice.",
@@ -84,11 +97,13 @@ async function resolvePrompt(params: {
   purpose: string;
   promptId?: string;
   promptContent?: string;
-}) {
+}): Promise<ResolvedPrompt> {
   if (params.promptContent?.trim()) {
     return {
       promptId: params.promptId || null,
       content: params.promptContent.trim(),
+      source: "request_content",
+      name: params.promptId ? "Edited prompt content" : "Inline prompt content",
     };
   }
 
@@ -100,6 +115,8 @@ async function resolvePrompt(params: {
       return {
         promptId: selectedPrompt.id,
         content: selectedPrompt.content,
+        source: "selected_prompt",
+        name: selectedPrompt.name,
       };
     }
   }
@@ -117,6 +134,8 @@ async function resolvePrompt(params: {
     return {
       promptId: defaultPrompt.id,
       content: defaultPrompt.content,
+      source: "default_prompt",
+      name: defaultPrompt.name,
     };
   }
 
@@ -126,6 +145,8 @@ async function resolvePrompt(params: {
       params.category === "Speaking"
         ? FALLBACK_PROMPTS.speakingTranscript
         : FALLBACK_PROMPTS.writing,
+    source: "fallback",
+    name: "Code fallback prompt",
   };
 }
 
@@ -255,6 +276,18 @@ export async function POST(req: NextRequest) {
           submissionId: submission.id,
           mode: "saved",
         },
+        ...(process.env.NODE_ENV === "development"
+          ? {
+              debug: {
+                model: null,
+                promptSource: resolvedPrompt.source,
+                promptId: resolvedPrompt.promptId,
+                promptName: resolvedPrompt.name,
+                promptPurpose: purpose,
+                promptPreview: resolvedPrompt.content.slice(0, 300),
+              },
+            }
+          : {}),
       });
     }
 
@@ -336,6 +369,21 @@ export async function POST(req: NextRequest) {
           summary: aiParsed.summary || "No feedback generated.",
         },
       },
+      ...(process.env.NODE_ENV === "development"
+        ? {
+            debug: {
+              model:
+                unit.category === "Speaking"
+                  ? getSpeakingTranscriptEvalModel()
+                  : getSubjectiveEvalModel(),
+              promptSource: resolvedPrompt.source,
+              promptId: resolvedPrompt.promptId,
+              promptName: resolvedPrompt.name,
+              promptPurpose: purpose,
+              promptPreview: resolvedPrompt.content.slice(0, 300),
+            },
+          }
+        : {}),
     });
   } catch (error) {
     // 503 用于“模型服务未配置/暂不可用”，其余错误按 500 返回。

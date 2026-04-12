@@ -107,6 +107,17 @@ type PromptRecord = {
   isDefault: boolean;
 };
 
+type PromptDebugPayload = {
+  model: string | null;
+  promptSource: string;
+  promptId: string | null;
+  promptName: string | null;
+  promptPurpose: string;
+  promptPreview: string;
+};
+
+const SUBJECTIVE_PERSIST_DEBOUNCE_MS = 500;
+
 // --- 辅助工具函数 (Helper Functions) ---
 
 /**
@@ -300,10 +311,15 @@ export default function SubjectiveRenderer({
   const [defaultPromptContent, setDefaultPromptContent] = useState("");
   const [promptLoading, setPromptLoading] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
+  const [promptDebug, setPromptDebug] = useState<PromptDebugPayload | null>(
+    null,
+  );
+  const answersRef = useRef<Record<string, string>>({});
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null); // 保存语音识别对象的引用
   const isSpeakingTranscript = !isWriting && mode !== "ai";
   // 同一个 UserPrompt 表里通过 purpose 区分“写作评分”和“口语转录评分”。
   const promptPurpose = isWriting ? "evaluation" : "transcript_eval";
+  const isDevelopment = process.env.NODE_ENV === "development";
 
   const storedState = useMemo<StoredUnitState>(() => {
     if (typeof window === "undefined") return EMPTY_UNIT_STATE;
@@ -388,6 +404,7 @@ export default function SubjectiveRenderer({
         setPromptName(selected?.name || t("promptFallbackName"));
         setPromptContent(selected?.content || "");
         setDefaultPromptContent(selected?.content || "");
+        setPromptDebug(null);
       } catch (error) {
         if (cancelled) return;
         console.error(error);
@@ -395,6 +412,7 @@ export default function SubjectiveRenderer({
         setPromptName(t("promptFallbackName"));
         setPromptContent("");
         setDefaultPromptContent("");
+        setPromptDebug(null);
         setSubmitError(t("promptLoadFailed"));
       } finally {
         if (!cancelled) {
@@ -439,10 +457,18 @@ export default function SubjectiveRenderer({
    * 自动保存：每当答案变化，实时同步到本地 localStorage
    */
   useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
+
+  useEffect(() => {
     // 口语转录模式现在按“逐题作答、统一提交”实现，
     // 因此本地草稿仍按每一道题的 question.id 分开保存。
     const reqIds = unit.questions.map((question) => question.id);
-    saveUnitState(unit.id, unit.category, reqIds, answers, 0);
+    const timeout = window.setTimeout(() => {
+      saveUnitState(unit.id, unit.category, reqIds, answersRef.current, 0);
+    }, SUBJECTIVE_PERSIST_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timeout);
   }, [answers, unit.category, unit.id, unit.questions]);
 
   const questions = unit.questions ?? [];
@@ -488,7 +514,15 @@ export default function SubjectiveRenderer({
 
     // 1. 遍历当前考试流程中的所有 Unit，提取答案
     for (const id of allFlowIds) {
-      const state = getUnitState(id);
+      const state =
+        id === unit.id
+          ? {
+              answers: answersRef.current,
+              reqIds: unit.questions.map((question) => question.id),
+              category: unit.category,
+              timeSpent: 0,
+            }
+          : getUnitState(id);
       const userAnswers = Object.fromEntries(
         Object.entries(state.answers).map(([key, value]) => [
           key,
@@ -524,6 +558,9 @@ export default function SubjectiveRenderer({
 
     setLoading(true);
     setSubmitError("");
+    if (process.env.NODE_ENV === "development") {
+      setPromptDebug(null);
+    }
 
     try {
       // 同时发起多个请求（每个 Unit 一个批改请求）
@@ -557,10 +594,15 @@ export default function SubjectiveRenderer({
             data?: SubjectiveEvaluation;
             error?: string;
             details?: string;
+            debug?: PromptDebugPayload;
           };
 
           if (!response.ok) {
             throw new Error(json.details || json.error || t("requestFailed"));
+          }
+
+          if (json.debug && process.env.NODE_ENV === "development") {
+            setPromptDebug(json.debug);
           }
 
           return { unitId: submission.unitId, data: json.data };
@@ -960,7 +1002,7 @@ export default function SubjectiveRenderer({
               </div>
 
               {!isWriting ? (
-            <div className="mt-5 rounded-[1.5rem] border border-blue-100 bg-blue-50/70 p-5 text-sm leading-7 text-slate-700">
+                <div className="mt-5 rounded-[1.5rem] border border-blue-100 bg-blue-50/70 p-5 text-sm leading-7 text-slate-700">
                   <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-500">
                     {t("speakingTranscriptLabel")}
                   </p>
@@ -968,6 +1010,35 @@ export default function SubjectiveRenderer({
                   <p className="mt-2 text-blue-700">
                     {t("speakingCompleteAllPartsHint")}
                   </p>
+                </div>
+              ) : null}
+
+              {isDevelopment ? (
+                <div className="mt-5 rounded-[1.5rem] border border-amber-200 bg-amber-50/80 p-5 text-sm text-slate-700 shadow-sm">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-amber-700">
+                    Dev Debug
+                  </p>
+                  <div className="mt-3 space-y-2 font-mono text-[12px] leading-6">
+                    <div>frontend.promptPurpose: {promptPurpose}</div>
+                    <div>frontend.promptId: {promptId || "none"}</div>
+                    <div>frontend.promptName: {promptName || "none"}</div>
+                    <div>
+                      frontend.promptPreview:{" "}
+                      {(promptContent || defaultPromptContent || "[empty]").slice(0, 180)}
+                    </div>
+                    {promptDebug ? (
+                      <>
+                        <div>backend.model: {promptDebug.model || "none"}</div>
+                        <div>backend.promptSource: {promptDebug.promptSource}</div>
+                        <div>backend.promptId: {promptDebug.promptId || "none"}</div>
+                        <div>backend.promptName: {promptDebug.promptName || "none"}</div>
+                        <div>backend.promptPurpose: {promptDebug.promptPurpose}</div>
+                        <div>backend.promptPreview: {promptDebug.promptPreview || "[empty]"}</div>
+                      </>
+                    ) : (
+                      <div>backend.debug: submit once to inspect actual model and prompt resolution</div>
+                    )}
+                  </div>
                 </div>
               ) : null}
 
@@ -1019,7 +1090,11 @@ export default function SubjectiveRenderer({
                   ) : null}
                   <Button
                     size="lg"
-                    className="rounded-full bg-gray-900 px-8 text-white shadow-lg hover:bg-gray-800"
+                    className={`rounded-full px-8 text-white shadow-lg ${
+                      isSpeakingTranscript && !allSpeakingQuestionsAnswered
+                        ? "bg-slate-300 hover:bg-slate-300"
+                        : "bg-gray-900 hover:bg-gray-800"
+                    }`}
                     onClick={() => void handleSubmitAll("ai")}
                     disabled={loading || (isSpeakingTranscript && !allSpeakingQuestionsAnswered)}
                     title={

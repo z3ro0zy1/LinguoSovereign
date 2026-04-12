@@ -12,6 +12,163 @@ type ReviewQuestion = {
   officialAnalysis?: unknown;
 };
 
+function renderInlineEmphasis(text: string, keyPrefix: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return (
+        <strong key={`${keyPrefix}-${index}`} className="font-semibold text-slate-900">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    return <span key={`${keyPrefix}-${index}`}>{part}</span>;
+  });
+}
+
+function renderStructuredText(text: string) {
+  const lines = text.split(/\r?\n/);
+  const nodes: ReactNode[] = [];
+  let paragraphBuffer: string[] = [];
+  let listBuffer: string[] = [];
+
+  const flushParagraph = () => {
+    if (!paragraphBuffer.length) return;
+    const paragraph = paragraphBuffer.join(" ").trim();
+    if (!paragraph) {
+      paragraphBuffer = [];
+      return;
+    }
+
+    const key = `paragraph-${nodes.length}`;
+    nodes.push(
+      <p key={key} className="text-[15px] leading-8 text-slate-700">
+        {renderInlineEmphasis(paragraph, key)}
+      </p>,
+    );
+    paragraphBuffer = [];
+  };
+
+  const flushList = () => {
+    if (!listBuffer.length) return;
+    const key = `list-${nodes.length}`;
+    nodes.push(
+      <ul
+        key={key}
+        className="space-y-2 pl-5 text-[15px] leading-8 text-slate-700 marker:text-slate-400 list-disc"
+      >
+        {listBuffer.map((item, index) => (
+          <li key={`${key}-${index}`}>{renderInlineEmphasis(item, `${key}-${index}`)}</li>
+        ))}
+      </ul>,
+    );
+    listBuffer = [];
+  };
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      flushList();
+      return;
+    }
+
+    if (line.startsWith("### ")) {
+      flushParagraph();
+      flushList();
+      nodes.push(
+        <h5 key={`h5-${nodes.length}`} className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500">
+          {line.slice(4)}
+        </h5>,
+      );
+      return;
+    }
+
+    if (line.startsWith("## ")) {
+      flushParagraph();
+      flushList();
+      nodes.push(
+        <h4 key={`h4-${nodes.length}`} className="text-lg font-semibold text-slate-900">
+          {line.slice(3)}
+        </h4>,
+      );
+      return;
+    }
+
+    if (line.startsWith("- ") || line.startsWith("* ")) {
+      flushParagraph();
+      listBuffer.push(line.slice(2).trim());
+      return;
+    }
+
+    paragraphBuffer.push(line);
+  });
+
+  flushParagraph();
+  flushList();
+
+  return <div className="space-y-4">{nodes}</div>;
+}
+
+function renderOfficialAnalysis(officialAnalysis: unknown) {
+  if (!officialAnalysis) return null;
+
+  if (
+    typeof officialAnalysis === "object" &&
+    !Array.isArray(officialAnalysis)
+  ) {
+    const payload = officialAnalysis as {
+      reference?: unknown;
+      aiGrammarAnalysis?: unknown;
+    };
+
+    return (
+      <div className="space-y-5">
+        {payload.reference ? (
+          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm">
+            <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">
+              Reference
+            </p>
+            <div className="prose prose-sm max-w-none text-slate-700">
+              {Array.isArray(payload.reference)
+                ? parse(
+                    payload.reference
+                      .map((item) => (typeof item === "string" ? item : formatAnswer(item)))
+                      .join("<br/>"),
+                  )
+                : parse(String(payload.reference))}
+            </div>
+          </div>
+        ) : null}
+
+        {payload.aiGrammarAnalysis ? (
+          <div className="rounded-2xl border border-violet-200 bg-[linear-gradient(180deg,rgba(245,243,255,0.9),rgba(255,255,255,0.95))] p-5 shadow-sm">
+            <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.2em] text-violet-700">
+              AI Grammar Analysis
+            </p>
+            <div className="rounded-xl border border-violet-100 bg-white/70 p-4">
+              {renderStructuredText(String(payload.aiGrammarAnalysis))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (Array.isArray(officialAnalysis)) {
+    return (
+      <div className="prose prose-sm max-w-none text-slate-700">
+        {parse(
+          officialAnalysis
+            .map((item) => (typeof item === "string" ? item : formatAnswer(item)))
+            .join("<br/>"),
+        )}
+      </div>
+    );
+  }
+
+  return renderStructuredText(String(officialAnalysis));
+}
+
 type ReviewSubResult = {
   officialAnswer?: unknown;
   isCorrect?: boolean;
@@ -202,14 +359,8 @@ export function ObjectiveReviewQuestionCard({
           </button>
 
           {isExpanded && (
-            <div className="border-t border-blue-100/50 bg-blue-50/30 p-4 pt-0 font-serif text-sm leading-relaxed text-gray-700 whitespace-pre-wrap">
-              {Array.isArray(question.officialAnalysis)
-                ? parse(
-                    question.officialAnalysis
-                      .map((item) => (typeof item === "string" ? item : formatAnswer(item)))
-                      .join("<br/>"),
-                  )
-                : parse(String(question.officialAnalysis))}
+            <div className="border-t border-blue-100/50 bg-blue-50/30 p-4 pt-4 text-sm text-gray-700">
+              {renderOfficialAnalysis(question.officialAnalysis)}
             </div>
           )}
         </div>

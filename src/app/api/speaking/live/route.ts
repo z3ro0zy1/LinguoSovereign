@@ -19,6 +19,12 @@ type PromptPayload = {
   promptContent?: string;
 };
 
+type PromptResolutionSource =
+  | "request_content"
+  | "selected_prompt"
+  | "default_prompt"
+  | "fallback";
+
 const FALLBACK_FREE_CHAT_PROMPT =
   "You are a highly natural bilingual speaking partner for IELTS speaking practice. You can speak Chinese and English naturally. Detect the user's current language from their speech and reply in that same language unless they ask to switch. Sound warm, clear, and human. Do not behave like a rigid scripted examiner. You may acknowledge, react, answer, clarify, or ask one helpful follow-up when it genuinely moves the conversation forward. Do not score the learner during the live session.";
 
@@ -95,6 +101,9 @@ export async function POST(req: NextRequest) {
     }
 
     let promptContent = body.promptContent?.trim();
+    let resolvedPromptId: string | null = body.promptId || null;
+    let promptSource: PromptResolutionSource = "fallback";
+    let promptName: string | null = null;
 
     /**
      * prompt 选择顺序保持和其他口语链路一致：
@@ -103,12 +112,20 @@ export async function POST(req: NextRequest) {
      * 3. 当前场景默认模板
      * 4. 代码内 fallback
      */
-    if (!promptContent) {
+    if (promptContent) {
+      promptSource = "request_content";
+      promptName = body.promptId ? "Edited prompt content" : "Inline prompt content";
+    } else {
       if (body.promptId) {
         const selectedPrompt = await prisma.userPrompt.findUnique({
           where: { id: body.promptId },
         });
         promptContent = selectedPrompt?.content?.trim();
+        if (promptContent) {
+          resolvedPromptId = selectedPrompt?.id || null;
+          promptSource = "selected_prompt";
+          promptName = selectedPrompt?.name || null;
+        }
       }
 
       if (!promptContent) {
@@ -121,7 +138,18 @@ export async function POST(req: NextRequest) {
           orderBy: { createdAt: "desc" },
         });
         promptContent = defaultPrompt?.content?.trim();
+        if (promptContent) {
+          resolvedPromptId = defaultPrompt?.id || null;
+          promptSource = "default_prompt";
+          promptName = defaultPrompt?.name || null;
+        }
       }
+    }
+
+    if (!promptContent) {
+      promptContent = FALLBACK_FREE_CHAT_PROMPT;
+      promptSource = "fallback";
+      promptName = "Code fallback prompt";
     }
 
     const questionBundle = buildPromptText(
@@ -143,6 +171,19 @@ export async function POST(req: NextRequest) {
       model: liveSession.model,
       unitTitle: unit.title,
       questionBundle,
+      ...(process.env.NODE_ENV === "development"
+        ? {
+            debug: {
+              model: liveSession.model,
+              promptSource,
+              promptId: resolvedPromptId,
+              promptName,
+              promptPurpose: "free_chat",
+              promptPreview: promptContent.slice(0, 300),
+              questionBundlePreview: questionBundle.slice(0, 300),
+            },
+          }
+        : {}),
     });
   } catch (error) {
     console.error("API Error: POST /api/speaking/live -", error);

@@ -9,6 +9,8 @@ import {
   Eye,
   EyeOff,
   Edit3,
+  Loader2,
+  Sparkles,
 } from "lucide-react";
 import parse from "html-react-parser";
 import { Switch } from "@/components/ui/switch";
@@ -44,6 +46,10 @@ export default function ReviewClient({
   const [showTranslate, setShowTranslate] = useState(false); // Toggles Chinese translation for passages
   const [showAnswers, setShowAnswers] = useState(false); // Toggles official answer display when no submission exists
   const [openAnalysis, setOpenAnalysis] = useState<Record<string, boolean>>({}); // Controls accordion state for individual question analysis
+  const [questionState, setQuestionState] = useState(unit.questions ?? []);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState("");
+  const isDevelopment = process.env.NODE_ENV === "development";
 
   // --- Audio Player State (Refs & HTML5 Audio) ---
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -59,6 +65,8 @@ export default function ReviewClient({
   const isListening =
     unit.category === "Listening" ||
     (unit.category === "Reading/Listening" && unit.title.includes("Part"));
+  const isReading =
+    unit.category === "Reading/Listening" && unit.title.includes("Passage");
 
   // Toggle play/pause for the native audio element
   const togglePlay = async () => {
@@ -97,6 +105,41 @@ export default function ReviewClient({
     setOpenAnalysis((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const generateReadingAnalysis = async () => {
+    setAnalysisLoading(true);
+    setAnalysisError("");
+
+    try {
+      const response = await fetch("/api/reading/analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unitId: unit.id }),
+      });
+      const json = (await response.json()) as {
+        error?: string;
+        details?: string;
+        data?: {
+          questions?: unknown[];
+        };
+      };
+
+      if (!response.ok) {
+        throw new Error(json.details || json.error || "AI analysis generation failed");
+      }
+
+      if (json.data?.questions) {
+        setQuestionState(json.data.questions);
+      }
+    } catch (error) {
+      console.error(error);
+      setAnalysisError(
+        error instanceof Error ? error.message : "AI analysis generation failed",
+      );
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+
   const aiScore = submission?.aiScore as any;
   const aiFeedback = submission?.aiFeedback as string | undefined;
   const hasSubjectiveAiEvaluation = Boolean(
@@ -114,7 +157,7 @@ export default function ReviewClient({
    */
   const questionDisplayNumbers: Record<string, number> = {};
   let runningSerial = 0;
-  for (const q of unit.questions ?? []) {
+  for (const q of questionState ?? []) {
     const base =
       typeof q.serialNumber === "number" && q.serialNumber > 0
         ? q.serialNumber
@@ -141,6 +184,20 @@ export default function ReviewClient({
           </div>
           <div className="ml-auto mr-4"><LanguageToggle /></div>
           <div className="flex items-center gap-4">
+            {isDevelopment && isReading ? (
+              <button
+                onClick={() => void generateReadingAnalysis()}
+                disabled={analysisLoading}
+                className="flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-4 py-1.5 text-sm font-medium text-violet-700 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {analysisLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Sparkles className="w-4 h-4" />
+                )}
+                {analysisLoading ? "生成中..." : "生成 AI 解析"}
+              </button>
+            ) : null}
             {submission && (
               <div className="px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full text-sm font-bold border border-blue-200">
                 {t("overallBand")}: {calculatedScore}
@@ -244,6 +301,11 @@ export default function ReviewClient({
 
             {/* Scrollable Content Area */}
             <div className="flex-1 overflow-y-auto p-6 lg:p-10">
+              {analysisError ? (
+                <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                  {analysisError}
+                </div>
+              ) : null}
               {unit.passage &&
               Array.isArray(unit.passage) &&
               unit.passage.length > 0 ? (
@@ -281,7 +343,7 @@ export default function ReviewClient({
             {/* Scrollable Question Area */}
             <div className="flex-1 overflow-y-auto p-6 lg:p-10">
               <div className="space-y-8 pb-32 max-w-2xl mx-auto">
-                {unit.questions.map((q: any) => {
+                {questionState.map((q: any) => {
                   const resData = aiScore?.results?.find(
                     (r: any) => r.questionId === q.id,
                   );
@@ -320,7 +382,7 @@ export default function ReviewClient({
 
             {/* --- Bottom Navigation Bar: Quick scroll to specific questions --- */}
             <div className="bg-white border-t border-gray-200 p-3 shadow-[0_-4px_20px_rgba(0,0,0,0.03)] shrink-0 flex flex-wrap gap-2 justify-center">
-              {unit.questions.map((q: any) => {
+              {questionState.map((q: any) => {
                 const resData = aiScore?.results?.find(
                   (r: any) => r.questionId === q.id,
                 );
@@ -423,12 +485,12 @@ export default function ReviewClient({
             )}
 
           {/* Questions Section: Shows the specific task instruction and reference analysis */}
-          {unit.questions && unit.questions.length > 0 && (
+          {questionState && questionState.length > 0 && (
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-6">
               <h3 className="text-lg font-bold mb-4 border-b pb-2">
                 {t("questionsAndReferences")}
               </h3>
-              {unit.questions.map((q: any) => (
+              {questionState.map((q: any) => (
                 <div
                   key={q.id}
                   className="bg-gray-50 p-4 rounded-xl border border-gray-200"
@@ -472,7 +534,7 @@ export default function ReviewClient({
               <div className="mb-6 space-y-3">
                 {userResponseEntries.length ? (
                   userResponseEntries.map(([questionId, value], index) => {
-                    const matchedQuestion = unit.questions.find((question: any) => question.id === questionId);
+                    const matchedQuestion = questionState.find((question: any) => question.id === questionId);
                     return (
                       <div key={questionId} className="rounded-2xl border border-slate-200 bg-slate-50/90 p-5 shadow-sm">
                         <div className="mb-3 flex items-center justify-between gap-3">
