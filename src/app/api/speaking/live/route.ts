@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { createGeminiLiveToken } from "@/lib/ai";
+import { issueGeminiLiveSessionToken } from "@/lib/ai";
 
 /**
  * 这个接口不再直接“代模型生成文本回复”。
@@ -158,7 +158,7 @@ export async function POST(req: NextRequest) {
 
     // token 在服务端签发时就把“模型 + systemInstruction + 转录配置 + 音频输出模态”锁进去。
     // 前端只负责连接和传音频，不再自己拼关键会话配置。
-    const liveSession = await createGeminiLiveToken({
+    const liveSession = await issueGeminiLiveSessionToken({
       systemInstruction: buildLiveSystemInstruction({
         promptContent: promptContent || FALLBACK_FREE_CHAT_PROMPT,
         unitTitle: unit.title,

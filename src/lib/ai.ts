@@ -39,6 +39,22 @@ type GeminiLiveTokenRequest = {
   systemInstruction: string;
 };
 
+function getFirstDefinedEnv(...keys: string[]) {
+  /**
+   * 统一的环境变量读取辅助函数。
+   *
+   * 目的：
+   * 1. 让模型选择优先从 .env 读取，而不是散落在代码里写死。
+   * 2. 允许我们保留旧变量名作为兼容别名，避免已有环境突然失效。
+   * 3. 读取时自动 trim，避免行尾空格这类隐性错误。
+   */
+  for (const key of keys) {
+    const value = process.env[key]?.trim();
+    if (value) return value;
+  }
+  return null;
+}
+
 function getOpenAiApiKey() {
   /**
    * 主观题评分统一走 OpenAI-compatible 协议。
@@ -83,10 +99,20 @@ function getGeminiTimeoutMs() {
 
 /**
  * Live API 走的是独立的实时音频模型，不应该继续复用 Flash-Lite。
- * 这里单独给它一组默认值，便于后续在 .env 里切换版本。
+ *
+ * 读取顺序：
+ * 1. GEMINI_SPEAKING_MODEL
+ * 2. GEMINI_LIVE_MODEL（旧别名，保留兼容）
+ * 3. 代码内默认值
+ *
+ * 这样你在 .env 里只要明确写 `GEMINI_SPEAKING_MODEL`，
+ * 就能真正控制自由对话用的 Live 模型，不需要再改代码。
  */
 function getGeminiLiveModelName() {
-  return process.env.GEMINI_LIVE_MODEL || DEFAULT_GEMINI_LIVE_MODEL;
+  return (
+    getFirstDefinedEnv("GEMINI_SPEAKING_MODEL", "GEMINI_LIVE_MODEL") ||
+    DEFAULT_GEMINI_LIVE_MODEL
+  );
 }
 
 function getGeminiLiveTokenUses() {
@@ -145,19 +171,21 @@ export function getAiClient() {
   });
 }
 
-export function getSubjectiveEvalModel() {
+export function getWritingEvaluationModel() {
   return (
-    process.env.OPENAI_MODEL ||
-    process.env.GLM_MODEL ||
+    getFirstDefinedEnv("OPENAI_MODEL", "GLM_MODEL") ||
     DEFAULT_OPENAI_MODEL
   );
 }
 
-export function getSpeakingTranscriptEvalModel() {
+export function getTranscriptEvaluationModel() {
   return (
-    process.env.OPENAI_SPEAKING_EVAL_MODEL ||
-    process.env.GLM_SPEAKING_EVAL_MODEL ||
-    getSubjectiveEvalModel()
+    getFirstDefinedEnv("GEMINI_SPEAKING_EVAL_MODEL") ||
+    getFirstDefinedEnv(
+      "OPENAI_SPEAKING_EVAL_MODEL",
+      "GLM_SPEAKING_EVAL_MODEL",
+    ) ||
+    getWritingEvaluationModel()
   );
 }
 
@@ -167,25 +195,58 @@ export function getSpeakingTranscriptEvalModel() {
  */
 export function getReadingAnalysisModel() {
   return (
-    process.env.OPENAI_READING_ANALYSIS_MODEL ||
-    process.env.GLM_READING_ANALYSIS_MODEL ||
-    getSubjectiveEvalModel()
+    getFirstDefinedEnv(
+      "OPENAI_READING_ANALYSIS_MODEL",
+      "GLM_READING_ANALYSIS_MODEL",
+    ) ||
+    getWritingEvaluationModel()
   );
 }
 
-export function getSpeakingConversationModel() {
-  return process.env.GEMINI_SPEAKING_MODEL || DEFAULT_GEMINI_MODEL;
+export function getGeminiTextConversationModel() {
+  /**
+   * 这是 Gemini 的普通 HTTP 文本/多模态会话模型。
+   * 它属于“非 Live、非原生音频”的能力层，
+   * 不是具体某个页面或模式的强绑定模型。
+   *
+   * 读取顺序：
+   * 1. GEMINI_SPEAKING_TEXT_MODEL
+   * 2. GEMINI_CONVERSATION_MODEL（旧文本会话别名）
+   * 3. GEMINI_SPEAKING_EVAL_MODEL
+   * 4. 默认 Flash-Lite
+   */
+  return (
+    getFirstDefinedEnv(
+      "GEMINI_SPEAKING_TEXT_MODEL",
+      "GEMINI_CONVERSATION_MODEL",
+      "GEMINI_SPEAKING_EVAL_MODEL",
+    ) || DEFAULT_GEMINI_MODEL
+  );
 }
 
-export function getSpeakingEvaluationModel() {
-  return process.env.GEMINI_SPEAKING_EVAL_MODEL || getSpeakingConversationModel();
+export function getGeminiTextEvaluationModel() {
+  return (
+    getFirstDefinedEnv("GEMINI_SPEAKING_EVAL_MODEL") ||
+    getGeminiTextConversationModel()
+  );
+}
+
+export function shouldUseGeminiTranscriptEvaluation() {
+  /**
+   * 口语 transcript 评分只需要一个 Gemini 配置位即可：
+   * `GEMINI_SPEAKING_EVAL_MODEL`
+   *
+   * 如果它存在，就说明“口语评分优先走 Gemini”；
+   * 否则再回退到 OpenAI-compatible / GLM。
+   */
+  return Boolean(getFirstDefinedEnv("GEMINI_SPEAKING_EVAL_MODEL"));
 }
 
 /**
  * 自由对话的原生音频会话模型。
  * 这里和“文本生成 / 转录评分”故意拆开，避免误把 Flash-Lite 当 Live 音频模型用。
  */
-export function getSpeakingLiveModel() {
+export function getGeminiLiveVoiceModel() {
   return getGeminiLiveModelName();
 }
 
@@ -204,9 +265,9 @@ function buildGeminiRequestBody(request: GeminiGenerateRequest) {
   };
 }
 
-export async function generateGeminiContent(request: GeminiGenerateRequest) {
-  // 这个函数面向“一次性得到完整文本结果”的场景，例如转录、总结、结构化抽取。
-  const model = getSpeakingEvaluationModel();
+export async function requestGeminiTextResponse(request: GeminiGenerateRequest) {
+  // 面向“一次性得到完整文本结果”的能力接口，例如转录、总结、结构化抽取。
+  const model = getGeminiTextEvaluationModel();
   const response = await fetchGemini(
     `/v1beta/models/${model}:generateContent`,
     buildGeminiRequestBody(request),
@@ -228,11 +289,11 @@ export async function generateGeminiContent(request: GeminiGenerateRequest) {
   );
 }
 
-export async function streamGeminiContent(
+export async function openGeminiTextStream(
   request: GeminiGenerateRequest,
 ): Promise<ReadableStream<Uint8Array>> {
-  // 这个函数只保留给普通 SSE 文本流使用，不再承担 Live 音频会话职责。
-  const model = getSpeakingConversationModel();
+  // 面向普通 SSE 文本流能力，不承担 Live 原生音频会话职责。
+  const model = getGeminiTextConversationModel();
   const response = await fetchGemini(
     `/v1beta/models/${model}:streamGenerateContent?alt=sse`,
     buildGeminiRequestBody(request),
@@ -249,7 +310,7 @@ export async function streamGeminiContent(
  * 2. token 内直接锁定 Live 会话的关键配置，减少前端乱配造成的不可控差异。
  * 3. uses 允许同一页面内“停止后继续”重新建会话，而不用每次都重新换 token。
  */
-export async function createGeminiLiveToken(request: GeminiLiveTokenRequest) {
+export async function issueGeminiLiveSessionToken(request: GeminiLiveTokenRequest) {
   const client = new GoogleGenAI({
     apiKey: getGeminiApiKey(),
     httpOptions: { apiVersion: "v1alpha" },
@@ -278,7 +339,7 @@ export async function createGeminiLiveToken(request: GeminiLiveTokenRequest) {
       newSessionExpireTime,
       expireTime,
       liveConnectConstraints: {
-        model: getSpeakingLiveModel(),
+        model: getGeminiLiveVoiceModel(),
         config: liveConfig,
       },
       // 这些字段在 token 里锁定，避免前端把会话改回 TEXT 模式或移除关键转录配置。
@@ -299,6 +360,6 @@ export async function createGeminiLiveToken(request: GeminiLiveTokenRequest) {
 
   return {
     token: token.name,
-    model: getSpeakingLiveModel(),
+    model: getGeminiLiveVoiceModel(),
   };
 }

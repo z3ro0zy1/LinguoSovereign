@@ -4,8 +4,10 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
   getAiClient,
-  getSpeakingTranscriptEvalModel,
-  getSubjectiveEvalModel,
+  getTranscriptEvaluationModel,
+  getWritingEvaluationModel,
+  requestGeminiTextResponse,
+  shouldUseGeminiTranscriptEvaluation,
 } from "@/lib/ai";
 
 /**
@@ -157,7 +159,7 @@ async function evaluateWriting(params: {
 }) {
   const openai = getAiClient();
   const completion = await openai.chat.completions.create({
-    model: getSubjectiveEvalModel(),
+    model: getWritingEvaluationModel(),
     messages: [
       {
         role: "system",
@@ -174,15 +176,43 @@ async function evaluateWriting(params: {
   return parseJsonSafely(completion.choices[0].message?.content || "{}");
 }
 
-// 口语“转录评分”也改回 OpenAI-compatible 链路，便于直接使用 Kimi 2.5。
+// 口语“转录评分”现在按配置自动分流：
+// - 如果配置了 GEMINI_SPEAKING_EVAL_MODEL，就走 Gemini Flash-Lite
+// - 否则回退到 OpenAI-compatible（Kimi / GLM / OpenAI）
 async function evaluateSpeakingTranscript(params: {
   promptSysMsg: string;
   promptBundle: string;
   transcript: string;
 }) {
+  if (shouldUseGeminiTranscriptEvaluation()) {
+    const result = await requestGeminiTextResponse({
+      systemInstruction:
+        `${params.promptSysMsg}\n` +
+        "Return strict JSON only. Schema: " +
+        "{ totalScore: number, dimensions: { FC: number, LR: number, GRA: number, P: number }, summary: string }. " +
+        "FC means Fluency and Coherence. LR means Lexical Resource. GRA means Grammatical Range and Accuracy. P means Pronunciation. " +
+        "The summary must be markdown and include strengths, weaknesses, and 3 specific next-step drills.",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text:
+                `Speaking prompt bundle:\n${params.promptBundle}\n\n` +
+                `Learner transcript:\n${params.transcript}`,
+            },
+          ],
+        },
+      ],
+      responseMimeType: "application/json",
+    });
+
+    return parseJsonSafely(result || "{}");
+  }
+
   const openai = getAiClient();
   const completion = await openai.chat.completions.create({
-    model: getSpeakingTranscriptEvalModel(),
+    model: getTranscriptEvaluationModel(),
     messages: [
       {
         role: "system",
@@ -352,8 +382,8 @@ export async function POST(req: NextRequest) {
           totalScore: fallbackTotalScore,
           model:
             unit.category === "Speaking"
-              ? getSpeakingTranscriptEvalModel()
-              : getSubjectiveEvalModel(),
+              ? getTranscriptEvaluationModel()
+              : getWritingEvaluationModel(),
         },
         aiFeedback: aiParsed.summary || "No feedback generated.",
       },
@@ -374,8 +404,8 @@ export async function POST(req: NextRequest) {
             debug: {
               model:
                 unit.category === "Speaking"
-                  ? getSpeakingTranscriptEvalModel()
-                  : getSubjectiveEvalModel(),
+                  ? getTranscriptEvaluationModel()
+                  : getWritingEvaluationModel(),
               promptSource: resolvedPrompt.source,
               promptId: resolvedPrompt.promptId,
               promptName: resolvedPrompt.name,
