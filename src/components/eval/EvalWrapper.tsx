@@ -40,6 +40,8 @@ export default function EvalWrapper({
 }) {
   const router = useRouter(); // Next.js 的页面跳转工具
   const { locale, t } = useLocale();
+  const isObjectiveUnit = unit.category === "Reading/Listening";
+  const subjectiveResultSessionKey = `linguo_subjective_result_session_${unit.id}`;
 
   /**
    * --- 提交结果状态管理 (Submission Result State) ---
@@ -58,8 +60,17 @@ export default function EvalWrapper({
      * 1. 旧结果很容易在清库后继续残留，造成“页面还有历史评分”的错觉。
      * 2. Speaking / Writing 更适合显示当前这次请求真实返回的结果，而不是浏览器陈旧缓存。
      */
-    if (unit.category !== "Reading/Listening") {
-      return null;
+    if (!isObjectiveUnit) {
+      const savedSessionResult = sessionStorage.getItem(
+        subjectiveResultSessionKey,
+      );
+      if (!savedSessionResult) return null;
+
+      try {
+        return JSON.parse(savedSessionResult);
+      } catch {
+        return null;
+      }
     }
 
     const savedRes = localStorage.getItem(`linguo_result_${unit.id}`);
@@ -82,7 +93,14 @@ export default function EvalWrapper({
   ) => {
     const targetId = specificUnitId || unit.id;
     if (typeof window !== "undefined") {
-      localStorage.setItem(`linguo_result_${targetId}`, JSON.stringify(res));
+      if (isObjectiveUnit) {
+        localStorage.setItem(`linguo_result_${targetId}`, JSON.stringify(res));
+      } else {
+        sessionStorage.setItem(
+          `linguo_subjective_result_session_${targetId}`,
+          JSON.stringify(res),
+        );
+      }
     }
     if (targetId === unit.id) {
       setSubmissionResult(res); // 更新当前页面的状态，让界面变红/变绿
@@ -90,7 +108,7 @@ export default function EvalWrapper({
   };
 
   // 判定逻辑
-  const isObjective = unit.category === "Reading/Listening"; // 是否属于“填空/选择”类
+  const isObjective = isObjectiveUnit; // 是否属于“填空/选择”类
   const isWriting = unit.category === "Writing"; // 是否是写作
   const isSpeakingFreeChat =
     unit.category === "Speaking" && subjectiveMode === "ai";
@@ -110,16 +128,24 @@ export default function EvalWrapper({
    * - 其他题型仍保持原有 allFlowIds 行为
    */
   const effectiveFlowIds =
-    isSpeakingTranscript && siblings?.length
+    ((isSpeakingTranscript || isWriting) && siblings?.length)
       ? siblings.map((sibling) => sibling.id)
       : allFlowIds;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (unit.category !== "Reading/Listening") {
+    /**
+     * 主观题结果现在使用 sessionStorage 做“页面会话级缓存”：
+     * - 同一轮写作/口语中来回切题，结果不丢
+     * - 关闭标签页后自然失效
+     *
+     * 因此这里只继续清理旧的 localStorage 主观题残留，
+     * 不再动新的 sessionStorage 结果缓存。
+     */
+    if (!isObjectiveUnit) {
       localStorage.removeItem(`linguo_result_${unit.id}`);
     }
-  }, [unit.category, unit.id]);
+  }, [isObjectiveUnit, unit.id]);
 
   // --- 模考连考逻辑 (Full Test Navigation Logic) ---
   const currentIndex = effectiveFlowIds.indexOf(unit.id); // 看看当前题在模考序列里排第几

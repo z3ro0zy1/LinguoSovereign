@@ -153,6 +153,7 @@ function renderInlineMarkdown(text: string, keyPrefix: string) {
 }
 
 export function parseRichAnswer(value: string): ReactNode[] {
+  const hasStructuredMarkdown = /(^|\n)\s*(#{2,3}\s|[-*]\s)/.test(value);
   const lines = value.split(/\r?\n/);
   const nodes: ReactNode[] = [];
   let paragraphBuffer: string[] = [];
@@ -221,6 +222,22 @@ export function parseRichAnswer(value: string): ReactNode[] {
     if (line.startsWith("- ") || line.startsWith("* ")) {
       flushParagraph();
       listBuffer.push(line.slice(2).trim());
+      return;
+    }
+
+    /**
+     * review 页里很多 AI 分析不是严格 Markdown，
+     * 而是“多行普通文本 + 少量强调”的混合形式。
+     * 如果继续把这些行直接 join(" ")，原始段落感会完全丢掉。
+     *
+     * 这里的策略是：
+     * - 真正有 markdown 结构（## / ### / 列表）时，沿用原有段落合并逻辑
+     * - 否则把每一行都当成一个独立段落保留下来
+     */
+    if (!hasStructuredMarkdown) {
+      flushParagraph();
+      paragraphBuffer.push(line);
+      flushParagraph();
       return;
     }
 

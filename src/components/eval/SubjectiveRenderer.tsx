@@ -476,6 +476,7 @@ export default function SubjectiveRenderer({
   const allSpeakingQuestionsAnswered =
     isSpeakingTranscript &&
     questions.every((question) => (answers[question.id] || "").trim().length > 0);
+  const isFinalStep = currentStep === questions.length - 1;
 
   const handleRestoreState = () => {
     setAnswers(hydrateAnswersFromState(storedState));
@@ -691,14 +692,14 @@ export default function SubjectiveRenderer({
           <div className="flex gap-2">
             <Button
               variant="ghost"
-              disabled={currentStep === 0}
+              disabled={currentStep === 0 || loading}
               onClick={() => setCurrentStep((step) => step - 1)}
             >
               {t("previousQuestion")}
             </Button>
             <Button
               variant="ghost"
-              disabled={currentStep === questions.length - 1}
+              disabled={currentStep === questions.length - 1 || loading}
               onClick={() => setCurrentStep((step) => step + 1)}
             >
               {t("nextQuestion")}
@@ -737,12 +738,15 @@ export default function SubjectiveRenderer({
                     <button
                       key={question.id}
                       type="button"
-                      onClick={() => setCurrentStep(index)}
+                      onClick={() => {
+                        if (!loading) setCurrentStep(index);
+                      }}
                       className={`block w-full rounded-[1.6rem] border px-5 py-5 text-left transition-all ${
                         isActive
                           ? "border-slate-900 bg-slate-900 text-white shadow-[0_20px_40px_rgba(15,23,42,0.18)]"
                           : "border-slate-200 bg-white/60 text-slate-800 hover:border-slate-300 hover:bg-white"
                       }`}
+                      disabled={loading}
                     >
                       <div className="flex items-center justify-between gap-4">
                         <div>
@@ -945,6 +949,7 @@ export default function SubjectiveRenderer({
                     <Button
                       variant={isRecording ? "destructive" : "secondary"}
                       className="rounded-full px-5"
+                      disabled={loading}
                       onClick={() => {
                         const recognition = recognitionRef.current;
                         if (!recognition) {
@@ -1052,6 +1057,7 @@ export default function SubjectiveRenderer({
                 }
                 spellCheck={false}
                 value={answers[currentQuestion.id] || ""}
+                disabled={loading}
                 onChange={(event) =>
                   setAnswers((previous) => ({
                     ...previous,
@@ -1063,7 +1069,22 @@ export default function SubjectiveRenderer({
 
             {/* 提交动作栏 */}
             <div className="flex justify-end pt-2 pb-24 md:pb-28">
-              {currentStep < questions.length - 1 ? (
+              {loading ? (
+                /**
+                 * 提交中时强制锁定到底部的“处理中”动作栏，
+                 * 避免用户切题后因为 currentStep 变化而看到“下一题”按钮，
+                 * 产生“按钮恢复了 / 提交是不是没在跑”的错觉。
+                 */
+                <div className="flex flex-wrap justify-end gap-3">
+                  <Button
+                    size="lg"
+                    className="rounded-full bg-gray-900 px-8 text-white hover:bg-gray-900"
+                    disabled
+                  >
+                    {t("submitting")}
+                  </Button>
+                </div>
+              ) : !isFinalStep ? (
                 // 如果这道题有多个 Part，点击进行到下一部分
                 <Button
                   size="lg"

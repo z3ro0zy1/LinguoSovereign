@@ -173,7 +173,12 @@ export function getAiClient() {
 
 export function getWritingEvaluationModel() {
   return (
-    getFirstDefinedEnv("OPENAI_MODEL", "GLM_MODEL") ||
+    getFirstDefinedEnv(
+      "OPENAI_WRITING_EVAL_MODEL",
+      "GLM_WRITING_EVAL_MODEL",
+      "OPENAI_MODEL",
+      "GLM_MODEL",
+    ) ||
     DEFAULT_OPENAI_MODEL
   );
 }

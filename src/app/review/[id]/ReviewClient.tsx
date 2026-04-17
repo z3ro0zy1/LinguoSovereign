@@ -167,6 +167,41 @@ export default function ReviewClient({
     runningSerial = base + answerCount - 1;
   }
 
+  const renderRichBlock = (value: unknown, placeholder?: string) => {
+    if (value === null || value === undefined) {
+      return (
+        <div className="text-sm leading-7 text-slate-500">
+          {placeholder || t("sampleAnswerPlaceholder")}
+        </div>
+      );
+    }
+
+    if (Array.isArray(value)) {
+      return (
+        <div className="space-y-3">
+          {value.map((item, index) => (
+            <div key={index} className="text-[15px] leading-8 text-slate-700">
+              {typeof item === "string"
+                ? parseRichAnswer(item)
+                : String(item)}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    const formatted = formatAnswer(value);
+    if (formatted === "N/A") {
+      return (
+        <div className="text-sm leading-7 text-slate-500">
+          {placeholder || t("sampleAnswerPlaceholder")}
+        </div>
+      );
+    }
+
+    return <div className="space-y-4">{parseRichAnswer(formatted)}</div>;
+  };
+
   // --- RENDERING: Objective Mode (Reading/Listening) ---
   if (isObjective) {
     return (
@@ -498,25 +533,21 @@ export default function ReviewClient({
                   <div className="prose prose-sm max-w-none text-gray-800 mb-3 font-serif">
                     {parse(q.stem, imageFixingOptions)}
                   </div>
-                  <div className={`mt-2 rounded border p-3 text-sm ${formatAnswer(q.answer) !== "N/A" ? "border-green-200 bg-green-50 text-green-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
+                  <div className={`mt-2 rounded border p-4 text-sm ${formatAnswer(q.answer) !== "N/A" ? "border-green-200 bg-green-50/80 text-green-900" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
                     <strong className="mb-1 block">
                       {t("sampleAnswer")}:
                     </strong>
-                    <div className="whitespace-pre-wrap leading-relaxed">
-                      {formatAnswer(q.answer) !== "N/A"
-                        ? formatAnswer(q.answer)
-                        : t("sampleAnswerPlaceholder")}
+                    <div className="mt-3">
+                      {renderRichBlock(q.answer, t("sampleAnswerPlaceholder"))}
                     </div>
                   </div>
                   {q.officialAnalysis && (
-                    <div className="mt-3 text-sm text-blue-800 bg-blue-50 p-3 rounded border border-blue-200">
+                    <div className="mt-3 rounded border border-blue-200 bg-blue-50/70 p-4 text-sm text-blue-950">
                       <strong className="block mb-1">
                         {t("analysisLabel")}:
                       </strong>
-                      <div className="whitespace-pre-wrap leading-relaxed">
-                        {Array.isArray(q.officialAnalysis)
-                          ? q.officialAnalysis.join("\n")
-                          : q.officialAnalysis}
+                      <div className="mt-3">
+                        {renderRichBlock(q.officialAnalysis)}
                       </div>
                     </div>
                   )}
@@ -564,8 +595,10 @@ export default function ReviewClient({
                 {t("aiCriticalAnalysis")}
               </h3>
               {hasSubjectiveAiEvaluation && aiFeedback ? (
-                <div className="space-y-5 rounded-2xl border border-blue-100 bg-blue-50/50 p-5">
+                <div className="rounded-[1.8rem] border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-cyan-50 p-6 shadow-sm">
+                  <div className="space-y-5 rounded-[1.4rem] border border-white/80 bg-white/90 p-6 shadow-sm">
                   {parseRichAnswer(aiFeedback)}
+                  </div>
                 </div>
               ) : hasSubjectiveAiEvaluation ? (
                 <div className="prose max-w-none text-gray-800 text-sm">

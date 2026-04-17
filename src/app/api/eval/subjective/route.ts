@@ -166,11 +166,13 @@ async function evaluateWriting(params: {
         content:
           `${params.promptSysMsg}\n` +
           "Return strict JSON only. Schema: " +
-          "{ totalScore: number, dimensions: { TR: number, CC: number, LR: number, GRA: number }, summary: string }",
+          "{ totalScore: number, dimensions: { TR: number, CC: number, LR: number, GRA: number }, summary: string }. " +
+          "Keep summary concise, under 220 English words, and focus on the highest-value fixes only.",
       },
       { role: "user", content: params.taskContext },
     ],
     response_format: { type: "json_object" },
+    max_tokens: 700,
   });
 
   return parseJsonSafely(completion.choices[0].message?.content || "{}");
@@ -191,7 +193,8 @@ async function evaluateSpeakingTranscript(params: {
         "Return strict JSON only. Schema: " +
         "{ totalScore: number, dimensions: { FC: number, LR: number, GRA: number, P: number }, summary: string }. " +
         "FC means Fluency and Coherence. LR means Lexical Resource. GRA means Grammatical Range and Accuracy. P means Pronunciation. " +
-        "The summary must be markdown and include strengths, weaknesses, and 3 specific next-step drills.",
+        "The summary must be markdown and include strengths, weaknesses, and 3 specific next-step drills. " +
+        "Keep the summary concise, under 220 English words.",
       contents: [
         {
           role: "user",
@@ -221,7 +224,8 @@ async function evaluateSpeakingTranscript(params: {
           "Return strict JSON only. Schema: " +
           "{ totalScore: number, dimensions: { FC: number, LR: number, GRA: number, P: number }, summary: string }. " +
           "FC means Fluency and Coherence. LR means Lexical Resource. GRA means Grammatical Range and Accuracy. P means Pronunciation. " +
-          "The summary must be markdown and include strengths, weaknesses, and 3 specific next-step drills.",
+          "The summary must be markdown and include strengths, weaknesses, and 3 specific next-step drills. " +
+          "Keep the summary concise, under 220 English words.",
       },
       {
         role: "user",
@@ -231,6 +235,7 @@ async function evaluateSpeakingTranscript(params: {
       },
     ],
     response_format: { type: "json_object" },
+    max_tokens: 700,
   });
 
   return parseJsonSafely(completion.choices[0].message?.content || "{}");
